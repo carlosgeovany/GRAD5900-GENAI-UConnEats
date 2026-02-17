@@ -34,6 +34,7 @@ UConn Eats is a public dining decision app for UConn Storrs that recommends wher
 ## Repository Files
 - `product-spec.md`: full Product Spec v2
 - `README.md`: repository overview and usage context
+- `DEVTEST.md`: developer test plan and test execution guide
 
 ## Planned Phases
 1. Phase 0: scraper + normalized storage + initial UI
