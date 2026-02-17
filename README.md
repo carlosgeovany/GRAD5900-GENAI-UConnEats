@@ -61,7 +61,7 @@ copy .env.example .env
 3. Edit `.env` and set:
 ```env
 OPENAI_API_KEY=your_api_key_here
-OPENAI_MODEL=gpt-4.1-mini
+OPENAI_MODEL=gpt-5.3-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_BASE_URL=
 ```
