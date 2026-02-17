@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAI, BadRequestError
 from menu_scraper import scrape_menus, scrape_official_hours
 
 
@@ -85,6 +85,23 @@ GENERIC_QUERY_TOKENS = {
     "lunch",
     "dinner",
 }
+
+
+def _candidate_models(primary: str, fallbacks: List[str]) -> List[str]:
+    out: List[str] = []
+    for m in [primary] + fallbacks:
+        m = (m or "").strip()
+        if m and m not in out:
+            out.append(m)
+    return out
+
+
+def _is_model_not_found_error(exc: BadRequestError) -> bool:
+    body = getattr(exc, "body", None) or {}
+    err = body.get("error", {}) if isinstance(body, dict) else {}
+    code = err.get("code")
+    msg = str(err.get("message", "")).lower()
+    return code == "model_not_found" or "does not exist" in msg
 
 
 def load_data(path: Path) -> Dict[str, Any]:
@@ -163,11 +180,27 @@ Return JSON only with this schema:
   "allergen_lookup": false
 }}
 """
-    response = client.responses.create(
-        model=model,
-        input=prompt,
-        temperature=0,
-    )
+    response = None
+    models_to_try = _candidate_models(model, ["gpt-5-mini", "gpt-4.1-mini"])
+    last_error: Optional[Exception] = None
+    for m in models_to_try:
+        try:
+            response = client.responses.create(
+                model=m,
+                input=prompt,
+            )
+            if m != model:
+                print(f"Warning: model '{model}' unavailable; using '{m}' instead.")
+            break
+        except BadRequestError as exc:
+            last_error = exc
+            if _is_model_not_found_error(exc):
+                continue
+            raise
+    if response is None:
+        if last_error:
+            raise last_error
+        raise RuntimeError("Unable to call OpenAI responses API with the configured model.")
     raw = response.output_text.strip()
     parsed = safe_json_parse(raw)
     return ParsedIntent(
@@ -795,7 +828,24 @@ def get_embedding(
     key = text.strip().lower()
     if key in cache:
         return cache[key]
-    res = client.embeddings.create(model=model, input=text)
+    models_to_try = _candidate_models(model, ["text-embedding-3-small", "text-embedding-3-large"])
+    res = None
+    last_error: Optional[Exception] = None
+    for m in models_to_try:
+        try:
+            res = client.embeddings.create(model=m, input=text)
+            if m != model:
+                print(f"Warning: embedding model '{model}' unavailable; using '{m}' instead.")
+            break
+        except BadRequestError as exc:
+            last_error = exc
+            if _is_model_not_found_error(exc):
+                continue
+            raise
+    if res is None:
+        if last_error:
+            raise last_error
+        raise RuntimeError("Unable to call OpenAI embeddings API with the configured model.")
     vec = res.data[0].embedding
     cache[key] = vec
     return vec
