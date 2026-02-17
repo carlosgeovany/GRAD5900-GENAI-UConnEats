@@ -1,0 +1,5 @@
+openai>=1.40.0
+python-dotenv>=1.0.1
+sqlalchemy>=2.0.35
+requests>=2.32.0
+beautifulsoup4>=4.12.3

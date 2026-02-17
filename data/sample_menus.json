@@ -1,0 +1,198 @@
+{
+  "halls": [
+    {
+      "hall_id": "northwest",
+      "hall_name": "Northwest Dining Hall",
+      "walking_minutes_from": {
+        "student union": 10,
+        "gampel": 12,
+        "library": 11
+      }
+    },
+    {
+      "hall_id": "south",
+      "hall_name": "South Dining Hall",
+      "walking_minutes_from": {
+        "student union": 6,
+        "gampel": 8,
+        "library": 7
+      }
+    },
+    {
+      "hall_id": "putnam",
+      "hall_name": "Putnam Dining Hall",
+      "walking_minutes_from": {
+        "student union": 14,
+        "gampel": 15,
+        "library": 13
+      }
+    }
+  ],
+  "menus": [
+    {
+      "hall_id": "northwest",
+      "menu_date": "2026-02-17",
+      "meals": {
+        "Lunch": [
+          {
+            "item_name": "Beef Pho",
+            "station": "World Fare",
+            "allergens": ["soy"],
+            "diet_tags": []
+          },
+          {
+            "item_name": "Tofu Stir Fry",
+            "station": "World Fare",
+            "allergens": ["soy", "sesame"],
+            "diet_tags": ["vegetarian", "vegan"]
+          }
+        ],
+        "Dinner": [
+          {
+            "item_name": "Chicken Ramen",
+            "station": "Soup Station",
+            "allergens": ["soy", "wheat"],
+            "diet_tags": []
+          },
+          {
+            "item_name": "Margherita Pizza",
+            "station": "Pizza Station",
+            "allergens": ["milk", "wheat"],
+            "diet_tags": ["vegetarian"]
+          }
+        ]
+      },
+      "hours": {
+        "Lunch": { "start": "11:00", "end": "14:30" },
+        "Dinner": { "start": "16:30", "end": "20:00" }
+      }
+    },
+    {
+      "hall_id": "south",
+      "menu_date": "2026-02-17",
+      "meals": {
+        "Lunch": [
+          {
+            "item_name": "Pepperoni Pizza",
+            "station": "Pizza Station",
+            "allergens": ["milk", "wheat"],
+            "diet_tags": []
+          },
+          {
+            "item_name": "Chickpea Curry Bowl",
+            "station": "World Fare",
+            "allergens": [],
+            "diet_tags": ["vegetarian", "vegan"]
+          }
+        ],
+        "Dinner": [
+          {
+            "item_name": "Spicy Pork Ramen",
+            "station": "Soup Station",
+            "allergens": ["soy", "wheat"],
+            "diet_tags": []
+          },
+          {
+            "item_name": "Grilled Salmon Plate",
+            "station": "Chef Table",
+            "allergens": ["fish"],
+            "diet_tags": []
+          }
+        ]
+      },
+      "hours": {
+        "Lunch": { "start": "11:00", "end": "14:00" },
+        "Dinner": { "start": "17:00", "end": "20:30" }
+      }
+    },
+    {
+      "hall_id": "putnam",
+      "menu_date": "2026-02-17",
+      "meals": {
+        "Lunch": [
+          {
+            "item_name": "Vegetable Pho",
+            "station": "World Fare",
+            "allergens": ["soy"],
+            "diet_tags": ["vegetarian", "vegan"]
+          },
+          {
+            "item_name": "Turkey Sandwich",
+            "station": "Deli",
+            "allergens": ["wheat"],
+            "diet_tags": []
+          }
+        ],
+        "Dinner": [
+          {
+            "item_name": "Mushroom Risotto",
+            "station": "Chef Table",
+            "allergens": ["milk"],
+            "diet_tags": ["vegetarian"]
+          },
+          {
+            "item_name": "Chicken Stir Fry",
+            "station": "World Fare",
+            "allergens": ["soy", "sesame"],
+            "diet_tags": []
+          }
+        ]
+      },
+      "hours": {
+        "Lunch": { "start": "11:30", "end": "14:00" },
+        "Dinner": { "start": "16:30", "end": "19:30" }
+      }
+    },
+    {
+      "hall_id": "northwest",
+      "menu_date": "2026-02-18",
+      "meals": {
+        "Dinner": [
+          {
+            "item_name": "Seafood Ramen",
+            "station": "Soup Station",
+            "allergens": ["shellfish", "soy", "wheat"],
+            "diet_tags": []
+          }
+        ]
+      },
+      "hours": {
+        "Dinner": { "start": "16:30", "end": "20:00" }
+      }
+    },
+    {
+      "hall_id": "south",
+      "menu_date": "2026-02-19",
+      "meals": {
+        "Dinner": [
+          {
+            "item_name": "Chicken Pho",
+            "station": "World Fare",
+            "allergens": ["soy"],
+            "diet_tags": []
+          }
+        ]
+      },
+      "hours": {
+        "Dinner": { "start": "17:00", "end": "20:30" }
+      }
+    },
+    {
+      "hall_id": "putnam",
+      "menu_date": "2026-02-20",
+      "meals": {
+        "Lunch": [
+          {
+            "item_name": "Pork Ramen",
+            "station": "Soup Station",
+            "allergens": ["soy", "wheat"],
+            "diet_tags": []
+          }
+        ]
+      },
+      "hours": {
+        "Lunch": { "start": "11:30", "end": "14:00" }
+      }
+    }
+  ]
+}

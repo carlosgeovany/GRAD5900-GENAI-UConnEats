@@ -25,28 +25,27 @@ No SSO is required.
 1. All allergen and dietary tags are sourced from the official dining website.
 2. Recommendation pipeline must apply hard constraints before scoring.
 3. If data is missing/uncertain for a requested hard constraint, item/hall is marked `cannot verify` and excluded by default.
-4. UI must show official substitution/disclaimer notice and "verify on-site for severe allergies".
-5. If no hall passes hard constraints, app returns safe fallback messaging, not a ranked unsafe option.
+4. If no hall passes hard constraints, returns safe fallback messaging, not a ranked unsafe option.
 
 ### 5) Data Sources and Contracts
 1. Menus and hall info:
 - Source: official publicly available UConn Dining pages.
 - Method: scheduled web scraping.
-- Update cadence: every 1-3 hours.
-- Persist `last_updated_at` and source URL for traceability.
+- Entry page: `https://dining.uconn.edu/nutrition/`
+- Hall discovery selector: `div#pg-60-2 a[href]`
+- Hall page parser targets: `.shortmenumeals`, `.shortmenucats`, `.shortmenurecipes`, `.shortmenuproddesc`
 2. Hours/open status:
 - Source: official hours pages.
-- Method: scrape + admin override table for emergency changes.
+- Method: scrape
 3. Occupancy:
 - Source: your SQL DB.
 - Grain: 45-minute blocks in America/New_York.
-- Target variable: occupancy index (0-100) derived from count/occupancy input.
+- Target variable: occupancy levels.
 
 ### 6) Recommendation Logic (v2)
 1. Step 1: Eligibility filter.
 - Hall is open in target window.
 - Hard dietary/allergen constraints pass.
-- Data freshness within configured SLA.
 2. Step 2: Score eligible options.
 - `TotalScore = w1*FoodMatch + w2*Distance + w3*Crowd + w4*PreferenceFit`
 3. Step 3: Explanation output.
@@ -61,8 +60,6 @@ No SSO is required.
 - Rolling 4-week average by hall + day-of-week + 45-min block.
 3. Output:
 - Occupancy index (0-100), band (`Low/Medium/High`), confidence level.
-4. Phase 2:
-- Add semester-week, weather, events, exam periods, anomaly handling.
 
 ### 8) Public Access and Security
 1. App is publicly accessible without SSO.
@@ -103,3 +100,18 @@ No SSO is required.
 - Mitigation: rate limits, bot checks, alert throttling.
 4. Hours disruptions:
 - Mitigation: admin overrides + incident runbook.
+
+### 13) Current CLI v1 Implementation Notes
+1. Current interface is CLI only (no UI in v1).
+2. Implemented scripts:
+- `menu_scraper.py`: scrapes official nutrition pages and writes normalized JSON.
+- `uconneats_cli.py`: loads normalized menu JSON and returns ranked hall recommendations.
+3. Current menu storage format:
+- `halls[]`: `hall_id`, `hall_name`, `source_url`
+- `menus[]`: `hall_id`, `hall_name`, `source_url`, `menu_date`, `meals`
+4. Occupancy in current v1:
+- Uses deterministic placeholder logic at 45-minute granularity.
+- SQL integration deferred until DB connection strings are provided.
+5. Intent parsing modes:
+- OpenAI mode (default): uses `OPENAI_API_KEY`.
+- Offline mode: `--offline-intent` for local parsing without API calls.

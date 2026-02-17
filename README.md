@@ -42,3 +42,61 @@ UConn Eats is a public dining decision app for UConn Storrs that recommends wher
 
 ## Status
 Specification phase complete. Implementation scaffolding next.
+
+## CLI Starter (Current Version)
+This repository now includes a CLI prototype:
+- `uconneats_cli.py`: recommend dining halls from query + constraints
+- `data/sample_menus.json`: normalized sample menu data for local testing
+- `.env.example`: environment variable template
+- `requirements.txt`: Python dependencies
+
+### How To Run
+1. Open a terminal in this repository root and install dependencies:
+```bash
+pip install -r requirements.txt
+```
+2. Create an environment file:
+```bash
+copy .env.example .env
+```
+3. Edit `.env` and set:
+```env
+OPENAI_API_KEY=your_api_key_here
+OPENAI_MODEL=gpt-4.1-mini
+UCONN_EATS_DB_URL=
+```
+4. Scrape live menus from the official nutrition site:
+```bash
+python menu_scraper.py --days-ahead 7 --out data/menus_scraped.json
+```
+5. Run recommendations with OpenAI intent parsing:
+```bash
+python uconneats_cli.py --query "I want pho and low crowd" --location "student union" --date 2026-02-17 --time 12:15 --avoid-crowds --data-file data/menus_scraped.json
+```
+6. Optional: run without OpenAI using local parsing only:
+```bash
+python uconneats_cli.py --query "I want ramen" --location "student union" --date 2026-02-17 --time 18:00 --offline-intent --data-file data/menus_scraped.json
+```
+
+### Additional Commands
+Scrape selected halls only:
+```bash
+python menu_scraper.py --days-ahead 2 --halls "south,northwest" --out data/menus_scraped.json
+```
+
+Run with sample local data (no scraper):
+```bash
+python uconneats_cli.py --query "I want pho" --location "student union" --date 2026-02-17 --time 12:15 --offline-intent --data-file data/sample_menus.json
+```
+
+### Useful Options
+- `--avoid-allergens "peanuts,sesame"`
+- `--diets "vegetarian"`
+- `--meal "Lunch"`
+- `--top-k 3`
+- `--days-ahead 7`
+- `--offline-intent` (skip OpenAI and use local parsing)
+
+### SQL Occupancy Hook
+Set `UCONN_EATS_DB_URL` later to connect the occupancy forecaster to your SQL source.  
+Current implementation uses a deterministic placeholder baseline at 45-minute granularity.
