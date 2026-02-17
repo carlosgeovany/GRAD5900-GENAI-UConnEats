@@ -141,12 +141,15 @@ def test_suggest_similar_by_embedding_returns_semantic_matches():
         craving_terms=["ramen"],
         cuisine_hints=[],
         avoid_allergens=[],
+        allergen_terms=[],
         preferred_diets=[],
         requested_date=None,
         requested_time=None,
         requested_meal=None,
         requested_hall=None,
         menu_lookup=False,
+        hours_lookup=False,
+        allergen_lookup=False,
     )
     out = cli.suggest_similar_by_embedding(
         data=data,
@@ -159,3 +162,77 @@ def test_suggest_similar_by_embedding_returns_semantic_matches():
     )
     assert out
     assert out[0]["item_name"] == "Chicken Ramen"
+
+
+def test_normalize_intent_moves_diet_terms_out_of_craving():
+    intent = cli.ParsedIntent(
+        craving_terms=["what", "vegetarian", "options"],
+        cuisine_hints=[],
+        avoid_allergens=[],
+        allergen_terms=[],
+        preferred_diets=[],
+        requested_date=None,
+        requested_time=None,
+        requested_meal=None,
+        requested_hall=None,
+        menu_lookup=False,
+        hours_lookup=False,
+        allergen_lookup=False,
+    )
+    out = cli.normalize_intent(intent)
+    assert out.preferred_diets == ["vegetarian"]
+    assert out.craving_terms == []
+    assert cli.is_diet_options_query(out) is True
+
+
+def test_list_diet_options_returns_tagged_items():
+    data = {
+        "menus": [
+            {
+                "menu_date": "2026-02-18",
+                "hall_name": "South",
+                "hall_id": "south",
+                "meals": {
+                    "Lunch": [
+                        {"item_name": "Chickpea Curry Bowl", "diet_tags": ["vegetarian", "vegan"], "allergens": []},
+                        {"item_name": "Beef Burger", "diet_tags": [], "allergens": []},
+                    ]
+                },
+            }
+        ]
+    }
+    out = cli.list_diet_options(
+        data=data,
+        target_date="2026-02-18",
+        meal="Lunch",
+        diets=["vegetarian"],
+        avoid_allergens=[],
+        hall_filter=None,
+        limit=10,
+    )
+    assert len(out) == 1
+    assert out[0]["item_name"] == "Chickpea Curry Bowl"
+
+
+def test_extract_allergen_terms():
+    out = cli.extract_allergen_terms("does this contain peanuts or dairy")
+    assert "peanuts" in out
+    assert "milk" in out
+
+
+def test_list_hours_for_lookup():
+    data = {
+        "halls": [{"hall_id": "south", "hall_name": "South"}],
+        "official_hours": {
+            "south": {
+                "wednesday": {
+                    "Lunch": {"start": "11:00", "end": "15:00"},
+                    "Dinner": {"start": "16:30", "end": "19:15"},
+                }
+            }
+        },
+    }
+    rows = cli.list_hours_for_lookup(data, target_date="2026-02-18", hall_filter="south")
+    assert len(rows) == 1
+    assert rows[0]["hall_name"] == "South"
+    assert "Lunch" in rows[0]["meals"]

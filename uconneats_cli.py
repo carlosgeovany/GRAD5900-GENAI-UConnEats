@@ -3,6 +3,7 @@ import json
 import math
 import os
 import re
+import requests
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from pathlib import Path
@@ -11,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from menu_scraper import scrape_menus
+from menu_scraper import scrape_menus, scrape_official_hours
 
 
 @dataclass
@@ -20,11 +21,70 @@ class ParsedIntent:
     cuisine_hints: List[str]
     avoid_allergens: List[str]
     preferred_diets: List[str]
+    allergen_terms: List[str]
     requested_date: Optional[str]
     requested_time: Optional[str]
     requested_meal: Optional[str]
     requested_hall: Optional[str]
     menu_lookup: bool
+    hours_lookup: bool
+    allergen_lookup: bool
+
+
+DIET_ALIASES = {
+    "vegetarian": "vegetarian",
+    "vegan": "vegan",
+    "halal": "halal",
+    "kosher": "kosher",
+    "glutenfree": "gluten-free",
+    "gluten-free": "gluten-free",
+    "pescatarian": "pescatarian",
+}
+
+KNOWN_ALLERGENS = {
+    "peanut": "peanuts",
+    "peanuts": "peanuts",
+    "tree nut": "tree nuts",
+    "tree nuts": "tree nuts",
+    "nuts": "tree nuts",
+    "milk": "milk",
+    "dairy": "milk",
+    "egg": "eggs",
+    "eggs": "eggs",
+    "soy": "soy",
+    "soybean": "soy",
+    "soybeans": "soy",
+    "wheat": "wheat",
+    "gluten": "gluten",
+    "sesame": "sesame",
+    "shellfish": "shellfish",
+    "fish": "fish",
+}
+
+GENERIC_QUERY_TOKENS = {
+    "what",
+    "whats",
+    "whats",
+    "is",
+    "are",
+    "for",
+    "at",
+    "on",
+    "in",
+    "the",
+    "there",
+    "option",
+    "options",
+    "food",
+    "foods",
+    "menu",
+    "tonight",
+    "today",
+    "tomorrow",
+    "breakfast",
+    "lunch",
+    "dinner",
+}
 
 
 def load_data(path: Path) -> Dict[str, Any]:
@@ -40,6 +100,10 @@ def write_data(path: Path, payload: Dict[str, Any]) -> None:
 
 def normalize_token(token: str) -> str:
     return token.strip().lower()
+
+
+def normalize_word(token: str) -> str:
+    return re.sub(r"[^a-z0-9\-]", "", normalize_token(token))
 
 
 def parse_csv_arg(raw: str) -> List[str]:
@@ -88,12 +152,15 @@ Return JSON only with this schema:
   "craving_terms": ["..."],
   "cuisine_hints": ["..."],
   "avoid_allergens": ["..."],
+  "allergen_terms": ["..."],
   "preferred_diets": ["..."],
   "requested_date": "YYYY-MM-DD or empty",
   "requested_time": "HH:MM 24h or empty",
   "requested_meal": "Breakfast/Lunch/Dinner/Late Night or empty",
   "requested_hall": "South/Northwest/etc or empty",
-  "menu_lookup": true
+  "menu_lookup": true,
+  "hours_lookup": false,
+  "allergen_lookup": false
 }}
 """
     response = client.responses.create(
@@ -107,12 +174,15 @@ Return JSON only with this schema:
         craving_terms=[normalize_token(x) for x in parsed.get("craving_terms", [])],
         cuisine_hints=[normalize_token(x) for x in parsed.get("cuisine_hints", [])],
         avoid_allergens=[normalize_token(x) for x in parsed.get("avoid_allergens", [])],
+        allergen_terms=[normalize_token(x) for x in parsed.get("allergen_terms", [])],
         preferred_diets=[normalize_token(x) for x in parsed.get("preferred_diets", [])],
         requested_date=(parsed.get("requested_date") or "").strip() or None,
         requested_time=(parsed.get("requested_time") or "").strip() or None,
         requested_meal=(parsed.get("requested_meal") or "").strip() or None,
         requested_hall=(parsed.get("requested_hall") or "").strip() or None,
         menu_lookup=bool(parsed.get("menu_lookup", False)),
+        hours_lookup=bool(parsed.get("hours_lookup", False)),
+        allergen_lookup=bool(parsed.get("allergen_lookup", False)),
     )
 
 
@@ -133,16 +203,22 @@ def local_parse_intent(
         x in query_l
         for x in ["what's for", "whats for", "what is for", "menu at", "what is on the menu", "what's on the menu"]
     )
+    hours_lookup = any(x in query_l for x in ["hours", "open", "close", "closing", "opening", "when does"])
+    allergen_lookup = any(x in query_l for x in ["allergen", "allergens", "contains", "contain", "free"])
+    allergen_terms = extract_allergen_terms(query_l)
     return ParsedIntent(
         craving_terms=tokens,
         cuisine_hints=[],
         avoid_allergens=explicit_allergens,
+        allergen_terms=allergen_terms,
         preferred_diets=explicit_diets,
         requested_date=requested_date,
         requested_time=requested_time,
         requested_meal=requested_meal,
         requested_hall=None,
         menu_lookup=menu_lookup,
+        hours_lookup=hours_lookup,
+        allergen_lookup=allergen_lookup or bool(allergen_terms),
     )
 
 
@@ -207,6 +283,39 @@ def parse_datetime_from_query_local(query_l: str, now_et: datetime) -> Tuple[Opt
                 requested_time = f"{int(hhmm.group(1)):02d}:{hhmm.group(2)}"
 
     return requested_date, requested_time, requested_meal
+
+
+def extract_allergen_terms(query_l: str) -> List[str]:
+    found = set()
+    for k, v in KNOWN_ALLERGENS.items():
+        if k in query_l:
+            found.add(v)
+    return sorted(found)
+
+
+def normalize_intent(intent: ParsedIntent) -> ParsedIntent:
+    diets = {normalize_token(x) for x in intent.preferred_diets}
+    allg = {normalize_token(x) for x in intent.allergen_terms}
+    cleaned_terms: List[str] = []
+    for t in intent.craving_terms:
+        w = normalize_word(t)
+        if not w or w in GENERIC_QUERY_TOKENS:
+            continue
+        if w in DIET_ALIASES:
+            diets.add(DIET_ALIASES[w])
+            continue
+        if w in KNOWN_ALLERGENS:
+            allg.add(KNOWN_ALLERGENS[w])
+            continue
+        cleaned_terms.append(w)
+    intent.craving_terms = cleaned_terms
+    intent.preferred_diets = sorted(diets)
+    intent.allergen_terms = sorted(allg)
+    return intent
+
+
+def is_diet_options_query(intent: ParsedIntent) -> bool:
+    return bool(intent.preferred_diets) and not intent.craving_terms and not intent.cuisine_hints
 
 
 def safe_json_parse(raw: str) -> Dict[str, Any]:
@@ -448,6 +557,63 @@ def recommend(
     return candidates[:top_k]
 
 
+def list_diet_options(
+    data: Dict[str, Any],
+    target_date: str,
+    meal: Optional[str],
+    diets: List[str],
+    avoid_allergens: List[str],
+    hall_filter: Optional[str],
+    limit: int = 25,
+) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
+    seen = set()
+    diets_set = {normalize_token(x) for x in diets}
+    fake_intent = ParsedIntent(
+        craving_terms=[],
+        cuisine_hints=[],
+        avoid_allergens=avoid_allergens,
+        allergen_terms=[],
+        preferred_diets=diets,
+        requested_date=None,
+        requested_time=None,
+        requested_meal=None,
+        requested_hall=None,
+        menu_lookup=False,
+        hours_lookup=False,
+        allergen_lookup=False,
+    )
+    for entry in data.get("menus", []):
+        if entry.get("menu_date") != target_date:
+            continue
+        if hall_filter and entry.get("hall_id") != hall_filter:
+            continue
+        hall_name = entry.get("hall_name", entry.get("hall_id", "Unknown Hall"))
+        for meal_name, items in entry.get("meals", {}).items():
+            if meal and meal_name != meal:
+                continue
+            for item in items:
+                if violates_hard_constraints(fake_intent, item):
+                    continue
+                tags = {normalize_token(x) for x in item.get("diet_tags", [])}
+                if diets_set and not diets_set.issubset(tags):
+                    continue
+                key = (hall_name, meal_name, item.get("item_name", ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    {
+                        "hall_name": hall_name,
+                        "meal": meal_name,
+                        "item_name": item.get("item_name", ""),
+                    }
+                )
+                if len(out) >= limit:
+                    return out
+    return out
+
+
 def list_menu_items_for_lookup(
     data: Dict[str, Any],
     hall_id: str,
@@ -467,6 +633,114 @@ def list_menu_items_for_lookup(
                 out.extend([i.get("item_name", "").strip() for i in items if i.get("item_name")])
     unique = sorted({x for x in out if x})
     return unique
+
+
+def list_hours_for_lookup(
+    data: Dict[str, Any],
+    target_date: str,
+    hall_filter: Optional[str],
+) -> List[Dict[str, Any]]:
+    try:
+        day_name = datetime.strptime(target_date, "%Y-%m-%d").strftime("%A").lower()
+    except ValueError:
+        return []
+    hours = data.get("official_hours", {})
+    if not hours:
+        try:
+            session = requests.Session()
+            hours = scrape_official_hours(session)
+        except Exception:
+            hours = {}
+    halls = {h["hall_id"]: h.get("hall_name", h["hall_id"]) for h in data.get("halls", [])}
+    out: List[Dict[str, Any]] = []
+    for hall_id, day_map in hours.items():
+        if hall_filter and hall_id != hall_filter:
+            continue
+        meals = day_map.get(day_name, {})
+        if not meals:
+            continue
+        out.append(
+            {
+                "hall_id": hall_id,
+                "hall_name": halls.get(hall_id, hall_id),
+                "meals": meals,
+            }
+        )
+    # Fallback for cache files created before official_hours was added.
+    if not out:
+        for entry in data.get("menus", []):
+            if entry.get("menu_date") != target_date:
+                continue
+            if hall_filter and entry.get("hall_id") != hall_filter:
+                continue
+            meals = entry.get("hours", {})
+            if not meals:
+                continue
+            out.append(
+                {
+                    "hall_id": entry.get("hall_id", ""),
+                    "hall_name": entry.get("hall_name", entry.get("hall_id", "Unknown Hall")),
+                    "meals": meals,
+                }
+            )
+    out.sort(key=lambda x: x["hall_name"])
+    return out
+
+
+def print_hours_lookup(hours_rows: List[Dict[str, Any]], target_date: str) -> None:
+    if not hours_rows:
+        print(f"\nNo hours found for {target_date}.")
+        return
+    print(f"\nDining hall hours for {target_date}:")
+    for row in hours_rows:
+        print(f"{row['hall_name']}:")
+        for meal, window in row["meals"].items():
+            print(f"  - {meal}: {window['start']} - {window['end']}")
+    print("\nDo you want menu options for one of these halls?")
+
+
+def allergen_match(item: Dict[str, Any], allergen_terms: List[str]) -> bool:
+    if not allergen_terms:
+        return False
+    item_allg = {normalize_token(a) for a in item.get("allergens", [])}
+    query_allg = {normalize_token(a) for a in allergen_terms}
+    return bool(item_allg.intersection(query_allg))
+
+
+def list_allergen_answers(
+    data: Dict[str, Any],
+    intent: ParsedIntent,
+    target_date: str,
+    meal: Optional[str],
+    hall_filter: Optional[str],
+    limit: int = 20,
+) -> Tuple[List[str], List[str]]:
+    contains_lines: List[str] = []
+    safe_lines: List[str] = []
+    terms = set(intent.craving_terms + intent.cuisine_hints)
+    for entry in data.get("menus", []):
+        if entry.get("menu_date") != target_date:
+            continue
+        if hall_filter and entry.get("hall_id") != hall_filter:
+            continue
+        hall_name = entry.get("hall_name", entry.get("hall_id", "Unknown Hall"))
+        for meal_name, items in entry.get("meals", {}).items():
+            if meal and meal_name != meal:
+                continue
+            for item in items:
+                item_name = item.get("item_name", "")
+                text = f"{item_name} {item.get('station', '')}".lower()
+                if terms and not any(t in text for t in terms):
+                    continue
+                if intent.allergen_terms and allergen_match(item, intent.allergen_terms):
+                    contains_lines.append(
+                        f"{item_name} at {hall_name} ({meal_name}) contains {', '.join(item.get('allergens', [])) or 'listed allergens'}."
+                    )
+                if intent.allergen_terms and not allergen_match(item, intent.allergen_terms):
+                    safe_lines.append(f"{item_name} at {hall_name} ({meal_name})")
+                if len(contains_lines) >= limit and len(safe_lines) >= limit:
+                    return contains_lines[:limit], safe_lines[:limit]
+    return contains_lines[:limit], safe_lines[:limit]
 
 
 def find_next_available(
@@ -661,6 +935,7 @@ def main() -> None:
             explicit_diets=explicit_diets,
             now_et=now_et,
         )
+    intent = normalize_intent(intent)
 
     target_date, now_t = resolve_target_dt(intent, now_et)
     explicit_meal = args.meal if args.meal else (intent.requested_meal or None)
@@ -686,6 +961,58 @@ def main() -> None:
                 print(f"...and {len(items) - 25} more items.")
         else:
             print(f"\nNo menu items found for {hall_name} on {target_date} ({meal_label}).")
+        print("\nIs there something special you want to eat?")
+        return
+
+    if intent.hours_lookup:
+        rows = list_hours_for_lookup(
+            data=data,
+            target_date=target_date,
+            hall_filter=hall_filter,
+        )
+        print_hours_lookup(rows, target_date)
+        return
+
+    if intent.allergen_lookup and intent.allergen_terms:
+        contains_lines, safe_lines = list_allergen_answers(
+            data=data,
+            intent=intent,
+            target_date=target_date,
+            meal=explicit_meal,
+            hall_filter=hall_filter,
+        )
+        focus = ", ".join(intent.allergen_terms)
+        if contains_lines:
+            print(f"\nItems mentioning {focus}:")
+            for i, line in enumerate(contains_lines[:10], start=1):
+                print(f"{i}. {line}")
+        if safe_lines:
+            print(f"\nPossible options without {focus}:")
+            for i, line in enumerate(safe_lines[:10], start=1):
+                print(f"{i}. {line}")
+        if not contains_lines and not safe_lines:
+            print(f"\nI could not find allergen-specific results for {focus} on {target_date}.")
+        print("\nWould you like me to narrow this by hall or meal?")
+        return
+
+    if is_diet_options_query(intent):
+        options = list_diet_options(
+            data=data,
+            target_date=target_date,
+            meal=explicit_meal,
+            diets=intent.preferred_diets,
+            avoid_allergens=intent.avoid_allergens,
+            hall_filter=hall_filter,
+            limit=25,
+        )
+        diet_label = ", ".join(intent.preferred_diets)
+        meal_label = explicit_meal or "all meals"
+        if options:
+            print(f"\n{diet_label.title()} options for {target_date} ({meal_label}):")
+            for i, o in enumerate(options, start=1):
+                print(f"{i}. {o['item_name']} at {o['hall_name']} ({o['meal']})")
+        else:
+            print(f"\nNo {diet_label} options found for {target_date} ({meal_label}).")
         print("\nIs there something special you want to eat?")
         return
 
@@ -715,6 +1042,9 @@ def main() -> None:
             )
             print("You can use this output to create an alert workflow next.")
         else:
+            if is_diet_options_query(intent):
+                print("\nNo matching dietary options found in the configured lookahead window.")
+                return
             similar = suggest_similar_by_embedding(
                 data=data,
                 intent=intent,
