@@ -29,7 +29,6 @@ def test_local_parse_intent_keeps_tokens_and_no_stopword_filter():
         query="I want pho",
         explicit_allergens=[],
         explicit_diets=[],
-        avoid_crowds=False,
         now_et=now_et,
     )
     # Stopword removal was intentionally removed; tokens should keep raw words.
@@ -143,10 +142,11 @@ def test_suggest_similar_by_embedding_returns_semantic_matches():
         cuisine_hints=[],
         avoid_allergens=[],
         preferred_diets=[],
-        avoid_crowds=False,
         requested_date=None,
         requested_time=None,
         requested_meal=None,
+        requested_hall=None,
+        menu_lookup=False,
     )
     out = cli.suggest_similar_by_embedding(
         data=data,
@@ -159,4 +159,3 @@ def test_suggest_similar_by_embedding_returns_semantic_matches():
     )
     assert out
     assert out[0]["item_name"] == "Chicken Ramen"
-

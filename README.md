@@ -1,29 +1,27 @@
 ﻿# UConn Eats
 
-UConn Eats is a public dining decision app for UConn Storrs that recommends where to eat based on menu match, dietary constraints, and predicted crowd level.
+UConn Eats is a public dining decision app for UConn Storrs that recommends where to eat based on menu match and dietary constraints.
 
 ## Project Goals
 - Recommend the best open dining hall for the current meal window.
+- Support direct hall menu lookup queries (e.g., "What's for dinner tonight at South?").
 - Suggest the next best time/day if a desired item is not available now.
 - Let users create alerts for future menu availability.
-- Show occupancy forecasts using 45-minute time blocks.
 
 ## Key Features (MVP)
 - Public access (no SSO required)
 - Web-scraped menu and dining hall data from official UConn Dining pages
 - Hard-filtered allergen/dietary constraint handling
 - Explainable recommendation results (why this hall)
-- Occupancy forecast labels (`Low`, `Medium`, `High`) plus score
+- Hall-specific menu listing when user asks "what's on the menu at <hall>"
 - "Not available now" fallback and alert subscriptions
 
 ## Data Sources
 - Official UConn Dining public website (menus, hall details, hours)
-- Internal SQL occupancy data source (45-minute granularity)
 
 ## High-Level Architecture
 - Menu Ingestion Service: scrape -> parse -> normalize -> store
 - Recommendation API: filter + rank halls by user context
-- Forecast Service: occupancy baseline and later ML enhancements
 - Notification Service: alerts when requested items appear
 
 ## Safety and Constraints
@@ -38,7 +36,7 @@ UConn Eats is a public dining decision app for UConn Storrs that recommends wher
 
 ## Planned Phases
 1. Phase 0: scraper + normalized storage + initial UI
-2. Phase 1 (MVP): full halls, open-now logic, baseline occupancy, alerts
+2. Phase 1 (MVP): full halls, open-now logic, alerts
 3. Phase 2: improved NLP matching, stronger forecasting, personalization
 
 ## Status
@@ -46,7 +44,7 @@ Specification phase complete. Implementation scaffolding next.
 
 ## CLI Starter (Current Version)
 This repository now includes a CLI prototype:
-- `uconneats_cli.py`: recommend dining halls from query + constraints
+- `uconneats_cli.py`: recommend dining halls from query + constraints and support hall menu lookup
 - `data/sample_menus.json`: normalized sample menu data for local testing
 - `.env.example`: environment variable template
 - `requirements.txt`: Python dependencies
@@ -66,7 +64,6 @@ OPENAI_API_KEY=your_api_key_here
 OPENAI_MODEL=gpt-4.1-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_BASE_URL=
-UCONN_EATS_DB_URL=
 ```
 If your key requires a custom endpoint, set:
 `OPENAI_BASE_URL=https://us.api.openai.com/v1`
@@ -76,7 +73,7 @@ python menu_scraper.py --days-ahead 7 --out data/menus_scraped.json
 ```
 5. Run recommendations with OpenAI intent parsing:
 ```bash
-python uconneats_cli.py --query "I want pho and low crowd for lunch today" --avoid-crowds --data-file data/menus_scraped.json
+python uconneats_cli.py --query "I want pho for lunch today" --data-file data/menus_scraped.json
 ```
 6. Optional: run without OpenAI using local parsing only:
 ```bash
@@ -93,6 +90,13 @@ Run with sample local data (no scraper):
 ```bash
 python uconneats_cli.py --query "I want pho" --offline-intent --data-file data/sample_menus.json
 ```
+
+Menu lookup example:
+```bash
+python uconneats_cli.py --query "Whats for dinner tonight at South?" --data-file data/menus_scraped.json
+```
+When the query is a menu lookup and a hall is identified, the app returns the menu items for that hall/date/meal and asks:
+`Is there something special you want to eat?`
 
 Automatic cache refresh behavior:
 - Default `--data-file` is `data/menus_scraped.json`.
@@ -116,7 +120,3 @@ Date/time behavior:
 Fallback behavior:
 - If no direct match is found in lookahead, the app can suggest semantically similar dishes using OpenAI embeddings.
 - This similarity fallback requires OpenAI mode (not `--offline-intent`).
-
-### SQL Occupancy Hook
-Set `UCONN_EATS_DB_URL` later to connect the occupancy forecaster to your SQL source.  
-Current implementation uses a deterministic placeholder baseline at 45-minute granularity.

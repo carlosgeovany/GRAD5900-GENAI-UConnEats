@@ -20,10 +20,11 @@ class ParsedIntent:
     cuisine_hints: List[str]
     avoid_allergens: List[str]
     preferred_diets: List[str]
-    avoid_crowds: bool
     requested_date: Optional[str]
     requested_time: Optional[str]
     requested_meal: Optional[str]
+    requested_hall: Optional[str]
+    menu_lookup: bool
 
 
 def load_data(path: Path) -> Dict[str, Any]:
@@ -72,7 +73,6 @@ def openai_parse_intent(
     query: str,
     explicit_allergens: List[str],
     explicit_diets: List[str],
-    avoid_crowds: bool,
     now_et: datetime,
 ) -> ParsedIntent:
     prompt = f"""
@@ -81,7 +81,6 @@ Extract user dining intent into strict JSON.
 User query: {query}
 Explicit allergens to avoid: {explicit_allergens}
 Explicit diet preferences: {explicit_diets}
-Avoid crowds preference: {avoid_crowds}
 Current Eastern time reference: {now_et.strftime('%Y-%m-%d %H:%M')}
 
 Return JSON only with this schema:
@@ -90,10 +89,11 @@ Return JSON only with this schema:
   "cuisine_hints": ["..."],
   "avoid_allergens": ["..."],
   "preferred_diets": ["..."],
-  "avoid_crowds": true,
   "requested_date": "YYYY-MM-DD or empty",
   "requested_time": "HH:MM 24h or empty",
-  "requested_meal": "Breakfast/Lunch/Dinner/Late Night or empty"
+  "requested_meal": "Breakfast/Lunch/Dinner/Late Night or empty",
+  "requested_hall": "South/Northwest/etc or empty",
+  "menu_lookup": true
 }}
 """
     response = client.responses.create(
@@ -108,10 +108,11 @@ Return JSON only with this schema:
         cuisine_hints=[normalize_token(x) for x in parsed.get("cuisine_hints", [])],
         avoid_allergens=[normalize_token(x) for x in parsed.get("avoid_allergens", [])],
         preferred_diets=[normalize_token(x) for x in parsed.get("preferred_diets", [])],
-        avoid_crowds=bool(parsed.get("avoid_crowds", avoid_crowds)),
         requested_date=(parsed.get("requested_date") or "").strip() or None,
         requested_time=(parsed.get("requested_time") or "").strip() or None,
         requested_meal=(parsed.get("requested_meal") or "").strip() or None,
+        requested_hall=(parsed.get("requested_hall") or "").strip() or None,
+        menu_lookup=bool(parsed.get("menu_lookup", False)),
     )
 
 
@@ -119,7 +120,6 @@ def local_parse_intent(
     query: str,
     explicit_allergens: List[str],
     explicit_diets: List[str],
-    avoid_crowds: bool,
     now_et: datetime,
 ) -> ParsedIntent:
     query_l = query.lower()
@@ -129,15 +129,20 @@ def local_parse_intent(
         if t.strip()
     ]
     requested_date, requested_time, requested_meal = parse_datetime_from_query_local(query_l, now_et)
+    menu_lookup = any(
+        x in query_l
+        for x in ["what's for", "whats for", "what is for", "menu at", "what is on the menu", "what's on the menu"]
+    )
     return ParsedIntent(
         craving_terms=tokens,
         cuisine_hints=[],
         avoid_allergens=explicit_allergens,
         preferred_diets=explicit_diets,
-        avoid_crowds=avoid_crowds,
         requested_date=requested_date,
         requested_time=requested_time,
         requested_meal=requested_meal,
+        requested_hall=None,
+        menu_lookup=menu_lookup,
     )
 
 
@@ -204,26 +209,6 @@ def parse_datetime_from_query_local(query_l: str, now_et: datetime) -> Tuple[Opt
     return requested_date, requested_time, requested_meal
 
 
-class OccupancyForecaster:
-    def __init__(self, db_url: Optional[str]) -> None:
-        self.db_url = db_url or ""
-
-    def forecast(self, hall_id: str, target_dt: datetime) -> Tuple[int, str, float]:
-        # Placeholder until SQL integration is added.
-        # Uses deterministic 45-minute block baseline so local testing is stable.
-        block = (target_dt.hour * 60 + target_dt.minute) // 45
-        seed = abs(hash(f"{hall_id}-{target_dt.weekday()}-{block}")) % 101
-        occupancy = int(seed)
-        if occupancy < 34:
-            band = "Low"
-        elif occupancy < 67:
-            band = "Medium"
-        else:
-            band = "High"
-        confidence = 0.55
-        return occupancy, band, confidence
-
-
 def safe_json_parse(raw: str) -> Dict[str, Any]:
     try:
         return json.loads(raw)
@@ -239,6 +224,35 @@ def resolve_target_dt(intent: ParsedIntent, now_et: datetime) -> Tuple[str, time
     date_str = intent.requested_date or now_et.strftime("%Y-%m-%d")
     time_str = intent.requested_time or now_et.strftime("%H:%M")
     return date_str, parse_time_hhmm(time_str)
+
+
+def resolve_hall_id(hall_hint: Optional[str], data: Dict[str, Any]) -> Optional[str]:
+    if not hall_hint:
+        return None
+    hint = normalize_token(hall_hint)
+    for h in data.get("halls", []):
+        if hint == normalize_token(h.get("hall_id", "")):
+            return h["hall_id"]
+        if hint == normalize_token(h.get("hall_name", "")):
+            return h["hall_id"]
+        if hint in normalize_token(h.get("hall_name", "")):
+            return h["hall_id"]
+    return None
+
+
+def extract_hall_from_query_local(query: str, data: Dict[str, Any]) -> Optional[str]:
+    q = normalize_token(query)
+    for h in data.get("halls", []):
+        hall_id = normalize_token(h.get("hall_id", ""))
+        hall_name = normalize_token(h.get("hall_name", ""))
+        if hall_id and hall_id in q:
+            return h.get("hall_id")
+        if hall_name and hall_name in q:
+            return h.get("hall_id")
+        parts = [p for p in hall_name.replace("-", " ").split() if p]
+        if parts and any(f"at {p}" in q for p in parts):
+            return h.get("hall_id")
+    return None
 
 
 def choose_meal_from_official_hours(
@@ -355,20 +369,13 @@ def violates_hard_constraints(intent: ParsedIntent, item: Dict[str, Any]) -> boo
     return bool(allergens.intersection(requested))
 
 
-def crowd_score(occupancy: int, avoid_crowds: bool) -> float:
-    if avoid_crowds:
-        return max(0.0, 1.0 - occupancy / 100.0)
-    return 0.5
-
-
 def score_candidate(
     food_match: float,
     open_now: float,
-    crowd: float,
     pref_fit: float,
 ) -> float:
-    w1, w2, w3, w4 = 0.5, 0.2, 0.2, 0.1
-    return (w1 * food_match) + (w2 * open_now) + (w3 * crowd) + (w4 * pref_fit)
+    w1, w2, w3 = 0.65, 0.2, 0.15
+    return (w1 * food_match) + (w2 * open_now) + (w3 * pref_fit)
 
 
 def recommend(
@@ -378,7 +385,7 @@ def recommend(
     now_t: time,
     explicit_meal: Optional[str],
     top_k: int,
-    forecaster: OccupancyForecaster,
+    hall_filter: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     halls = {h["hall_id"]: h for h in data["halls"]}
     official_hours = data.get("official_hours", {})
@@ -386,6 +393,8 @@ def recommend(
 
     for entry in data["menus"]:
         if entry["menu_date"] != target_date:
+            continue
+        if hall_filter and entry["hall_id"] != hall_filter:
             continue
 
         hall = halls[entry["hall_id"]]
@@ -409,10 +418,6 @@ def recommend(
                 if violates_hard_constraints(intent, item):
                     continue
 
-                occupancy, crowd_band, confidence = forecaster.forecast(
-                    entry["hall_id"],
-                    datetime.combine(datetime.strptime(target_date, "%Y-%m-%d").date(), now_t),
-                )
                 fm = food_match_score(intent, item["item_name"], item.get("station", ""))
                 pf = preference_fit_score(intent, item.get("diet_tags", []))
                 if intent.craving_terms and fm <= 0:
@@ -421,8 +426,7 @@ def recommend(
                     continue
 
                 os = 1.0 if meal in open_meals else 0.2
-                cs = crowd_score(occupancy, intent.avoid_crowds)
-                total = score_candidate(fm, os, cs, pf)
+                total = score_candidate(fm, os, pf)
 
                 candidates.append(
                     {
@@ -432,19 +436,37 @@ def recommend(
                         "meal": meal,
                         "item_name": item["item_name"],
                         "station": item.get("station", ""),
-                        "occupancy_index": occupancy,
-                        "crowd_band": crowd_band,
-                        "forecast_confidence": confidence,
                         "score": round(total, 4),
                         "why": [
                             f"matches item '{item['item_name']}'",
-                            f"predicted crowd {crowd_band} ({occupancy}/100)",
+                            "currently available in selected meal window",
                         ],
                     }
                 )
 
     candidates.sort(key=lambda x: x["score"], reverse=True)
     return candidates[:top_k]
+
+
+def list_menu_items_for_lookup(
+    data: Dict[str, Any],
+    hall_id: str,
+    target_date: str,
+    meal: Optional[str],
+) -> List[str]:
+    out: List[str] = []
+    for entry in data.get("menus", []):
+        if entry.get("hall_id") != hall_id or entry.get("menu_date") != target_date:
+            continue
+        meals = entry.get("meals", {})
+        if meal:
+            items = meals.get(meal, [])
+            out.extend([i.get("item_name", "").strip() for i in items if i.get("item_name")])
+        else:
+            for _, items in meals.items():
+                out.extend([i.get("item_name", "").strip() for i in items if i.get("item_name")])
+    unique = sorted({x for x in out if x})
+    return unique
 
 
 def find_next_available(
@@ -573,7 +595,7 @@ def print_recommendations(results: List[Dict[str, Any]]) -> None:
     for idx, r in enumerate(results, start=1):
         print(
             f"{idx}. {r['hall_name']} | {r['meal']} | {r['item_name']} | "
-            f"score={r['score']} | crowd={r['crowd_band']} ({r['occupancy_index']}/100)"
+            f"score={r['score']}"
         )
         print(f"   because: {', '.join(r['why'])}")
 
@@ -581,11 +603,10 @@ def print_recommendations(results: List[Dict[str, Any]]) -> None:
 def main() -> None:
     load_dotenv(override=True)
     parser = argparse.ArgumentParser(description="UConn Eats CLI recommender (MVP starter).")
-    parser.add_argument("--query", required=True, help='Example: "I want pho, avoid peanuts, low crowd"')
+    parser.add_argument("--query", required=True, help='Example: "I want pho, avoid peanuts"')
     parser.add_argument("--meal", default="", help="Optional meal override (Lunch/Dinner)")
     parser.add_argument("--avoid-allergens", default="", help="Comma-separated allergens")
     parser.add_argument("--diets", default="", help="Comma-separated diets (vegetarian, vegan, halal)")
-    parser.add_argument("--avoid-crowds", action="store_true", help="Prefer lower occupancy halls")
     parser.add_argument("--top-k", type=int, default=3, help="Number of recommendations")
     parser.add_argument("--days-ahead", type=int, default=7, help="Search window for next availability")
     parser.add_argument(
@@ -616,13 +637,11 @@ def main() -> None:
         max_cache_hours=args.max_cache_hours,
         days_ahead=args.days_ahead,
     )
-    db_url = os.getenv("UCONN_EATS_DB_URL", "")
-    forecaster = OccupancyForecaster(db_url=db_url)
     client: Optional[OpenAI] = None
     embedding_model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 
     if args.offline_intent:
-        intent = local_parse_intent(args.query, explicit_allergens, explicit_diets, args.avoid_crowds, now_et)
+        intent = local_parse_intent(args.query, explicit_allergens, explicit_diets, now_et)
     else:
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
         if not api_key:
@@ -640,13 +659,35 @@ def main() -> None:
             query=args.query,
             explicit_allergens=explicit_allergens,
             explicit_diets=explicit_diets,
-            avoid_crowds=args.avoid_crowds,
             now_et=now_et,
         )
 
     target_date, now_t = resolve_target_dt(intent, now_et)
     explicit_meal = args.meal if args.meal else (intent.requested_meal or None)
+    hall_filter = resolve_hall_id(intent.requested_hall, data)
+    if not hall_filter:
+        hall_filter = extract_hall_from_query_local(args.query, data)
     print(f"Using target datetime (ET): {target_date} {now_t.strftime('%H:%M')}")
+
+    if intent.menu_lookup and hall_filter:
+        items = list_menu_items_for_lookup(
+            data=data,
+            hall_id=hall_filter,
+            target_date=target_date,
+            meal=explicit_meal,
+        )
+        hall_name = next((h["hall_name"] for h in data.get("halls", []) if h.get("hall_id") == hall_filter), hall_filter)
+        meal_label = explicit_meal or "All Meals"
+        if items:
+            print(f"\n{hall_name} | {target_date} | {meal_label}")
+            for i, item in enumerate(items[:25], start=1):
+                print(f"{i}. {item}")
+            if len(items) > 25:
+                print(f"...and {len(items) - 25} more items.")
+        else:
+            print(f"\nNo menu items found for {hall_name} on {target_date} ({meal_label}).")
+        print("\nIs there something special you want to eat?")
+        return
 
     results = recommend(
         data=data,
@@ -655,7 +696,7 @@ def main() -> None:
         now_t=now_t,
         explicit_meal=explicit_meal,
         top_k=args.top_k,
-        forecaster=forecaster,
+        hall_filter=hall_filter,
     )
     print_recommendations(results)
 
