@@ -319,7 +319,7 @@ def print_recommendations(results: List[Dict[str, Any]]) -> None:
 
 
 def main() -> None:
-    load_dotenv()
+    load_dotenv(override=True)
     parser = argparse.ArgumentParser(description="UConn Eats CLI recommender (MVP starter).")
     parser.add_argument("--query", required=True, help='Example: "I want pho, avoid peanuts, low crowd"')
     parser.add_argument("--location", default="student union", help="Starting point (e.g., student union)")
@@ -355,11 +355,16 @@ def main() -> None:
     if args.offline_intent:
         intent = local_parse_intent(args.query, explicit_allergens, explicit_diets, args.avoid_crowds)
     else:
-        api_key = os.getenv("OPENAI_API_KEY", "")
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is required. Set it in your environment or .env file.")
+        if api_key.startswith("your_") or api_key.startswith("<") or "api_key_here" in api_key:
+            raise RuntimeError(
+                "OPENAI_API_KEY appears to be a placeholder. Put your real key in .env (not .env.example)."
+            )
         model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
-        client = OpenAI(api_key=api_key)
+        base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+        client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
         intent = openai_parse_intent(
             client=client,
             model=model,

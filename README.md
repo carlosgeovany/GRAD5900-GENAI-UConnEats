@@ -63,8 +63,11 @@ copy .env.example .env
 ```env
 OPENAI_API_KEY=your_api_key_here
 OPENAI_MODEL=gpt-4.1-mini
+OPENAI_BASE_URL=
 UCONN_EATS_DB_URL=
 ```
+If your key requires a custom endpoint, set:
+`OPENAI_BASE_URL=https://us.api.openai.com/v1`
 4. Scrape live menus from the official nutrition site:
 ```bash
 python menu_scraper.py --days-ahead 7 --out data/menus_scraped.json
