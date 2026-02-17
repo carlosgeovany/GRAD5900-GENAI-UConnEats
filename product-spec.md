@@ -103,8 +103,8 @@ No SSO is required.
 ### 13) Current CLI v1 Implementation Notes
 1. Current interface is CLI only (no UI in v1).
 2. Implemented scripts:
-- `menu_scraper.py`: scrapes official nutrition pages and writes normalized JSON.
-- `uconneats_cli.py`: loads normalized menu JSON, returns ranked hall recommendations, and handles hall menu lookup queries.
+- `uconneats/menu_scraper.py`: scrapes official nutrition pages and writes normalized JSON.
+- `uconneats/cli.py`: loads normalized menu JSON, returns ranked hall recommendations, and handles hall menu lookup queries.
 3. Current menu storage format:
 - `halls[]`: `hall_id`, `hall_name`, `source_url`
 - `menus[]`: `hall_id`, `hall_name`, `source_url`, `menu_date`, `meals`

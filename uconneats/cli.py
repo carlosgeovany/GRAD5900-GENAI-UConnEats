@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from openai import OpenAI, BadRequestError
-from menu_scraper import scrape_menus, scrape_official_hours
+from .menu_scraper import scrape_menus, scrape_official_hours
 
 
 @dataclass

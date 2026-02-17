@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import uconneats_cli as cli
+from uconneats import cli
 
 
 def test_parse_datetime_from_query_local_relative_time():

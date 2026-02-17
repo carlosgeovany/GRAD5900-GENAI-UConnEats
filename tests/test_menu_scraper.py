@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from bs4 import BeautifulSoup
 
-import menu_scraper as ms
+from uconneats import menu_scraper as ms
 
 
 def test_parse_time_token_with_meridiem_propagation():
@@ -79,4 +79,3 @@ def test_build_date_url_sets_query_fields():
     out = ms.build_date_url(base, datetime(2026, 2, 17))
     assert "dtdate=2%2F17%2F2026" in out
     assert "myaction=read" in out
-

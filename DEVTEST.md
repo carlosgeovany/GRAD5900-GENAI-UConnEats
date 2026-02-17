@@ -42,12 +42,12 @@ pytest -q tests/test_menu_scraper.py
 ## Manual Smoke Test Commands
 Scrape menus:
 ```bash
-python menu_scraper.py --days-ahead 7 --out data/menus_scraped.json
+python -m uconneats.menu_scraper --days-ahead 7 --out data/menus_scraped.json
 ```
 
 Run CLI:
 ```bash
-python uconneats_cli.py --query "I want ramen tomorrow at 6:30 pm" --data-file data/menus_scraped.json
+python -m uconneats.cli --query "I want ramen tomorrow at 6:30 pm" --data-file data/menus_scraped.json
 ```
 
 ## Expected Outcomes

@@ -44,7 +44,7 @@ Specification phase complete. Implementation scaffolding next.
 
 ## CLI Starter (Current Version)
 This repository now includes a CLI prototype:
-- `uconneats_cli.py`: recommend dining halls from query + constraints and support hall menu lookup
+- `uconneats/cli.py`: recommend dining halls from query + constraints and support hall menu lookup
 - `data/sample_menus.json`: normalized sample menu data for local testing
 - `.env.example`: environment variable template
 - `requirements.txt`: Python dependencies
@@ -69,31 +69,31 @@ If your key requires a custom endpoint, set:
 `OPENAI_BASE_URL=https://us.api.openai.com/v1`
 4. Scrape live menus from the official nutrition site:
 ```bash
-python menu_scraper.py --days-ahead 7 --out data/menus_scraped.json
+python -m uconneats.menu_scraper --days-ahead 7 --out data/menus_scraped.json
 ```
 5. Run recommendations with OpenAI intent parsing:
 ```bash
-python uconneats_cli.py --query "I want pho for lunch today" --data-file data/menus_scraped.json
+python -m uconneats.cli --query "I want pho for lunch today" --data-file data/menus_scraped.json
 ```
 6. Optional: run without OpenAI using local parsing only:
 ```bash
-python uconneats_cli.py --query "I want ramen tomorrow at 6:30 pm" --offline-intent --data-file data/menus_scraped.json
+python -m uconneats.cli --query "I want ramen tomorrow at 6:30 pm" --offline-intent --data-file data/menus_scraped.json
 ```
 
 ### Additional Commands
 Scrape selected halls only:
 ```bash
-python menu_scraper.py --days-ahead 2 --halls "south,northwest" --out data/menus_scraped.json
+python -m uconneats.menu_scraper --days-ahead 2 --halls "south,northwest" --out data/menus_scraped.json
 ```
 
 Run with sample local data (no scraper):
 ```bash
-python uconneats_cli.py --query "I want pho" --offline-intent --data-file data/sample_menus.json
+python -m uconneats.cli --query "I want pho" --offline-intent --data-file data/sample_menus.json
 ```
 
 Menu lookup example:
 ```bash
-python uconneats_cli.py --query "Whats for dinner tonight at South?" --data-file data/menus_scraped.json
+python -m uconneats.cli --query "Whats for dinner tonight at South?" --data-file data/menus_scraped.json
 ```
 When the query is a menu lookup and a hall is identified, the app returns the menu items for that hall/date/meal and asks:
 `Is there something special you want to eat?`
