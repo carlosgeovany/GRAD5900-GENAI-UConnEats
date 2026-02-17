@@ -352,7 +352,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--out",
-        default=str(Path(__file__).parent / "data" / "menus_scraped.json"),
+        default=str(Path(__file__).parent.parent / "data" / "menus_scraped.json"),
         help="Output path for normalized JSON.",
     )
     args = parser.parse_args()

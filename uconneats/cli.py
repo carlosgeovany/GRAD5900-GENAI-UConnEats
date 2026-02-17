@@ -941,7 +941,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--data-file",
-        default=str(Path(__file__).parent / "data" / "menus_scraped.json"),
+        default=str(Path(__file__).parent.parent / "data" / "menus_scraped.json"),
         help="Path to normalized menu data JSON",
     )
     parser.add_argument(
@@ -1090,7 +1090,6 @@ def main() -> None:
                 f"Next likely match: {next_option['hall_name']} on {next_option['date']} "
                 f"({next_option['meal']}) - {next_option['item_name']}."
             )
-            print("You can use this output to create an alert workflow next.")
         else:
             if is_diet_options_query(intent):
                 print("\nNo matching dietary options found in the configured lookahead window.")

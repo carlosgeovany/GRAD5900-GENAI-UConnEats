@@ -6,7 +6,6 @@ UConn Eats is a public dining decision app for UConn Storrs that recommends wher
 - Recommend the best open dining hall for the current meal window.
 - Support direct hall menu lookup queries (e.g., "What's for dinner tonight at South?").
 - Suggest the next best time/day if a desired item is not available now.
-- Let users create alerts for future menu availability.
 
 ## Key Features (MVP)
 - Public access (no SSO required)
@@ -14,7 +13,7 @@ UConn Eats is a public dining decision app for UConn Storrs that recommends wher
 - Hard-filtered allergen/dietary constraint handling
 - Explainable recommendation results (why this hall)
 - Hall-specific menu listing when user asks "what's on the menu at <hall>"
-- "Not available now" fallback and alert subscriptions
+- "Not available now" fallback suggestions
 
 ## Data Sources
 - Official UConn Dining public website (menus, hall details, hours)
@@ -22,7 +21,6 @@ UConn Eats is a public dining decision app for UConn Storrs that recommends wher
 ## High-Level Architecture
 - Menu Ingestion Service: scrape -> parse -> normalize -> store
 - Recommendation API: filter + rank halls by user context
-- Notification Service: alerts when requested items appear
 
 ## Safety and Constraints
 - Allergen/dietary restrictions are treated as hard constraints.
@@ -36,7 +34,7 @@ UConn Eats is a public dining decision app for UConn Storrs that recommends wher
 
 ## Planned Phases
 1. Phase 0: scraper + normalized storage + initial UI
-2. Phase 1 (MVP): full halls, open-now logic, alerts
+2. Phase 1 (MVP): full halls and open-now logic
 3. Phase 2: improved NLP matching, stronger forecasting, personalization
 
 ## Status

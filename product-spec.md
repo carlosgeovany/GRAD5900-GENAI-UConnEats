@@ -16,8 +16,7 @@ No SSO is required.
 2. Hall/menu ingestion via web scraping from official UConn Dining pages.
 3. Recommendation engine for "eat now" and "next best time/day".
 4. Hall-specific menu lookup flow (e.g., "What's for dinner tonight at South?").
-5. Alerting for item availability.
-6. Explainable recommendations ("because" reasons).
+5. Explainable recommendations ("because" reasons).
 
 ### 4) Safety and Constraint Rules
 1. All allergen and dietary tags are sourced from the official dining website.
@@ -47,7 +46,6 @@ No SSO is required.
 - Return top reason codes: item match, open now.
 4. Step 4: "Not available now" fallback.
 - Search next N days and suggest soonest viable hall/meal.
-- Offer alert subscription.
 
 ### 6.1) Menu Lookup Logic
 1. If query intent is menu lookup and a hall is identified:
@@ -66,7 +64,6 @@ No SSO is required.
 1. App is publicly accessible without SSO.
 2. API protections required:
 - Rate limiting.
-- Basic abuse prevention on alerts.
 - Input validation and query sanitization.
 3. Privacy:
 - Location is optional and ephemeral by default.
@@ -76,13 +73,12 @@ No SSO is required.
 1. Recommendation API p95 latency: < 500 ms (cache warm).
 2. Graceful degradation if source website unavailable: serve latest cached data with staleness banner.
 3. Accessibility: screen-reader labels and clear text labels.
-4. Observability: scrape health, parser break detection, stale-data alerts.
+4. Observability: scrape health, parser break detection, stale-data monitoring.
 
 ### 10) MVP Success Metrics
-1. Session recommendation action rate (`Navigate` or `Set Alert`): >= 80%.
+1. Session recommendation action rate: >= 80%.
 2. Median time-to-decision: < 20 seconds.
-3. Alert conversion in suggested window: >= 30%.
-4. Constraint violation rate for hard restrictions: 0%.
+3. Constraint violation rate for hard restrictions: 0%.
 
 ### 11) Acceptance Criteria (Launch Gates)
 1. Hard constraints never violated in test suite.
@@ -96,7 +92,7 @@ No SSO is required.
 2. Official menu substitutions:
 - Mitigation: explicit disclaimer, freshness labels, safe-default filtering.
 3. Public endpoint abuse:
-- Mitigation: rate limits, bot checks, alert throttling.
+- Mitigation: rate limits, bot checks, request throttling.
 4. Hours disruptions:
 - Mitigation: admin overrides + incident runbook.
 
