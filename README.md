@@ -1,6 +1,6 @@
 ﻿# UConn Eats
 
-UConn Eats is a public dining decision app for UConn Storrs that recommends where to eat based on menu match, dietary constraints, distance, and predicted crowd level.
+UConn Eats is a public dining decision app for UConn Storrs that recommends where to eat based on menu match, dietary constraints, and predicted crowd level.
 
 ## Project Goals
 - Recommend the best open dining hall for the current meal window.
@@ -63,6 +63,7 @@ copy .env.example .env
 ```env
 OPENAI_API_KEY=your_api_key_here
 OPENAI_MODEL=gpt-4.1-mini
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_BASE_URL=
 UCONN_EATS_DB_URL=
 ```
@@ -74,11 +75,11 @@ python menu_scraper.py --days-ahead 7 --out data/menus_scraped.json
 ```
 5. Run recommendations with OpenAI intent parsing:
 ```bash
-python uconneats_cli.py --query "I want pho and low crowd" --location "student union" --date 2026-02-17 --time 12:15 --avoid-crowds --data-file data/menus_scraped.json
+python uconneats_cli.py --query "I want pho and low crowd for lunch today" --avoid-crowds --data-file data/menus_scraped.json
 ```
 6. Optional: run without OpenAI using local parsing only:
 ```bash
-python uconneats_cli.py --query "I want ramen" --location "student union" --date 2026-02-17 --time 18:00 --offline-intent --data-file data/menus_scraped.json
+python uconneats_cli.py --query "I want ramen tomorrow at 6:30 pm" --offline-intent --data-file data/menus_scraped.json
 ```
 
 ### Additional Commands
@@ -89,8 +90,14 @@ python menu_scraper.py --days-ahead 2 --halls "south,northwest" --out data/menus
 
 Run with sample local data (no scraper):
 ```bash
-python uconneats_cli.py --query "I want pho" --location "student union" --date 2026-02-17 --time 12:15 --offline-intent --data-file data/sample_menus.json
+python uconneats_cli.py --query "I want pho" --offline-intent --data-file data/sample_menus.json
 ```
+
+Automatic cache refresh behavior:
+- Default `--data-file` is `data/menus_scraped.json`.
+- On each query, the app refreshes only if cache is missing, unreadable, older than `--max-cache-hours` (default 24), or missing today's ET menu.
+- Otherwise it uses cached menus (no web scrape on that query).
+- Cached payload includes official hours scraped from `https://dining.uconn.edu/hours/`, used for hall/day meal-window inference (no hardcoded meal cutoff).
 
 ### Useful Options
 - `--avoid-allergens "peanuts,sesame"`
@@ -98,7 +105,16 @@ python uconneats_cli.py --query "I want pho" --location "student union" --date 2
 - `--meal "Lunch"`
 - `--top-k 3`
 - `--days-ahead 7`
+- `--max-cache-hours 24`
 - `--offline-intent` (skip OpenAI and use local parsing)
+
+Date/time behavior:
+- The app extracts target date/time from `--query` when present.
+- If not present, it defaults to current `America/New_York` system time.
+
+Fallback behavior:
+- If no direct match is found in lookahead, the app can suggest semantically similar dishes using OpenAI embeddings.
+- This similarity fallback requires OpenAI mode (not `--offline-intent`).
 
 ### SQL Occupancy Hook
 Set `UCONN_EATS_DB_URL` later to connect the occupancy forecaster to your SQL source.  

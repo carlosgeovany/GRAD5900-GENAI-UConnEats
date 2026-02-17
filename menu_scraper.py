@@ -11,9 +11,11 @@ from bs4 import BeautifulSoup
 
 
 NUTRITION_INDEX_URL = "https://dining.uconn.edu/nutrition/"
+HOURS_URL = "https://dining.uconn.edu/hours/"
 DATE_PARAM = "dtdate"
 USER_AGENT = "UConnEatsBot/0.1 (academic project CLI prototype)"
 MEAL_NAMES = {"breakfast", "lunch", "dinner", "brunch", "late night"}
+DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
 def normalize_space(text: str) -> str:
@@ -67,6 +69,139 @@ def fetch_soup(session: requests.Session, url: str) -> BeautifulSoup:
     response = session.get(url, timeout=30)
     response.raise_for_status()
     return BeautifulSoup(response.text, "html.parser")
+
+
+def parse_time_token(token: str, default_meridiem: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+    cleaned = token.strip().lower().replace("*", "").replace(" ", "")
+    m = re.match(r"^(\d{1,2})(?::(\d{2}))?(am|pm)?$", cleaned)
+    if not m:
+        return None, None
+    hh = int(m.group(1))
+    mm = int(m.group(2) or "00")
+    meridiem = m.group(3) or default_meridiem
+    if meridiem == "pm" and hh != 12:
+        hh += 12
+    if meridiem == "am" and hh == 12:
+        hh = 0
+    if hh < 0 or hh > 23 or mm < 0 or mm > 59:
+        return None, None
+    return f"{hh:02d}:{mm:02d}", meridiem
+
+
+def parse_time_range(raw: str) -> Optional[Tuple[str, str]]:
+    text = normalize_space(raw).replace("*", "")
+    if "-" not in text:
+        return None
+    left, right = [x.strip() for x in text.split("-", 1)]
+    right_hhmm, right_meridiem = parse_time_token(right)
+    if not right_hhmm:
+        return None
+    left_hhmm, _ = parse_time_token(left, default_meridiem=right_meridiem)
+    if not left_hhmm:
+        return None
+    return left_hhmm, right_hhmm
+
+
+def normalize_hall_label(label: str) -> List[str]:
+    txt = label.replace("*", "").strip().lower()
+    txt = txt.replace("connecticut hall", "connecticut")
+    txt = txt.replace("north & whitney", "north, whitney")
+    parts = re.split(r",|&", txt)
+    halls = []
+    for p in parts:
+        p = normalize_space(p)
+        if not p:
+            continue
+        if p in {"putnam", "connecticut", "mcmahon", "north", "northwest", "south", "gelfenbien", "whitney"}:
+            halls.append(p)
+    return halls
+
+
+def is_hall_header(line: str) -> bool:
+    if not line or ":" in line:
+        return False
+    if re.search(r"\d", line):
+        return False
+    return bool(normalize_hall_label(line))
+
+
+def parse_hours_section(section_text: str, weekday_mode: bool) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
+    lines = [normalize_space(x) for x in section_text.splitlines() if normalize_space(x)]
+    out: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {}
+    current_halls: List[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if is_hall_header(line):
+            current_halls = normalize_hall_label(line)
+            i += 1
+            continue
+
+        meal_match = re.match(r"^(Breakfast|Lunch|Dinner|Brunch|Late Night)\s*:\s*(.*)$", line, re.IGNORECASE)
+        if not meal_match or not current_halls:
+            i += 1
+            continue
+
+        meal = meal_match.group(1).title()
+        rhs = meal_match.group(2).strip()
+        if not rhs and (i + 1) < len(lines):
+            rhs = lines[i + 1]
+            i += 1
+
+        day_targets = ["saturday", "sunday"] if not weekday_mode else DAY_NAMES[:5]
+        rhs_l = rhs.lower()
+        if "(saturday)" in rhs_l:
+            day_targets = ["saturday"]
+            rhs = rhs_l.replace("(saturday)", "").strip()
+        elif "(sunday)" in rhs_l:
+            day_targets = ["sunday"]
+            rhs = rhs_l.replace("(sunday)", "").strip()
+
+        parsed_range = parse_time_range(rhs)
+        if parsed_range:
+            start_hhmm, end_hhmm = parsed_range
+            for hall in current_halls:
+                for day_name in day_targets:
+                    out.setdefault(hall, {}).setdefault(day_name, {})[meal] = {"start": start_hhmm, "end": end_hhmm}
+        i += 1
+    return out
+
+
+def merge_hours(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(a)
+    for hall, day_map in b.items():
+        for day_name, meals in day_map.items():
+            for meal, window in meals.items():
+                merged.setdefault(hall, {}).setdefault(day_name, {})[meal] = window
+    return merged
+
+
+def scrape_official_hours(session: requests.Session) -> Dict[str, Any]:
+    soup = fetch_soup(session, HOURS_URL)
+    blobs = soup.select(".textwidget")
+    page_text = ""
+    for b in blobs:
+        txt = b.get_text("\n", strip=True)
+        if "MONDAY through FRIDAY HOURS" in txt and "WEEKEND HOURS" in txt:
+            page_text = txt
+            break
+    if not page_text:
+        page_text = soup.get_text("\n", strip=True)
+
+    start_wk = page_text.find("MONDAY through FRIDAY HOURS")
+    start_we = page_text.find("WEEKEND HOURS")
+    end_we = page_text.find("KOSHER & HALAL")
+    if start_wk < 0 or start_we < 0:
+        return {}
+    if end_we < 0:
+        end_we = len(page_text)
+
+    weekday_text = page_text[start_wk + len("MONDAY through FRIDAY HOURS") : start_we]
+    weekend_text = page_text[start_we + len("WEEKEND HOURS") : end_we]
+
+    weekday_hours = parse_hours_section(weekday_text, weekday_mode=True)
+    weekend_hours = parse_hours_section(weekend_text, weekday_mode=False)
+    return merge_hours(weekday_hours, weekend_hours)
 
 
 def discover_halls(session: requests.Session, index_url: str) -> List[Dict[str, str]]:
@@ -177,6 +312,7 @@ def scrape_menus(days_ahead: int, include_halls: Optional[List[str]]) -> Dict[st
 
     start_date = datetime.now()
     menus: List[Dict[str, Any]] = []
+    official_hours = scrape_official_hours(session)
 
     for hall in halls:
         base_url = hall["url"]
@@ -190,6 +326,8 @@ def scrape_menus(days_ahead: int, include_halls: Optional[List[str]]) -> Dict[st
     result = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "source_index_url": NUTRITION_INDEX_URL,
+        "source_hours_url": HOURS_URL,
+        "official_hours": official_hours,
         "halls": [
             {"hall_id": h["hall_id"], "hall_name": h["hall_name"], "source_url": h["url"]}
             for h in halls

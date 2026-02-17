@@ -11,7 +11,7 @@ No SSO is required.
 ### 2) Core Definitions
 1. `Occupancy forecast`: predicted crowd level for a dining hall/time block using 45-minute granularity.
 2. `Hard constraints`: restrictions that must never be violated (allergen excludes, strict dietary excludes).
-3. `Soft preferences`: ranking preferences (craving match, distance, low crowd, cuisine likes).
+3. `Soft preferences`: ranking preferences (craving match, low crowd, cuisine likes).
 
 ### 3) Scope (MVP)
 1. Public app (no login required).
@@ -36,7 +36,8 @@ No SSO is required.
 - Hall page parser targets: `.shortmenumeals`, `.shortmenucats`, `.shortmenurecipes`, `.shortmenuproddesc`
 2. Hours/open status:
 - Source: official hours pages.
-- Method: scrape
+- Method: scrape (`https://dining.uconn.edu/hours/`) and persist hall/day meal windows.
+- Runtime use: meal-window inference comes from scraped official hours (not fixed time cutoffs).
 3. Occupancy:
 - Source: your SQL DB.
 - Grain: 45-minute blocks in America/New_York.
@@ -47,9 +48,9 @@ No SSO is required.
 - Hall is open in target window.
 - Hard dietary/allergen constraints pass.
 2. Step 2: Score eligible options.
-- `TotalScore = w1*FoodMatch + w2*Distance + w3*Crowd + w4*PreferenceFit`
+- `TotalScore = w1*FoodMatch + w2*OpenNow + w3*Crowd + w4*PreferenceFit`
 3. Step 3: Explanation output.
-- Return top reason codes: item match, open now, walk time, predicted crowd.
+- Return top reason codes: item match, open now, predicted crowd.
 4. Step 4: "Not available now" fallback.
 - Search next N days and suggest soonest viable hall/meal.
 - Offer alert subscription.

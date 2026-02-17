@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .env
 data/menus_scraped*.json
+data/menus_cache_test*.json
+data/menus_*test*.json
