@@ -67,7 +67,7 @@ If your key requires a custom endpoint, set:
 `OPENAI_BASE_URL=https://us.api.openai.com/v1`
 4. Scrape live menus from the official nutrition site:
 ```bash
-python -m uconneats.menu_scraper --days-ahead 7 --out data/menus_scraped.json
+python -m uconneats.menu_scraper --out data/menus_scraped.json
 ```
 5. Run recommendations with OpenAI intent parsing:
 ```bash
@@ -81,7 +81,7 @@ python -m uconneats.cli --query "I want ramen tomorrow at 6:30 pm" --offline-int
 ### Additional Commands
 Scrape selected halls only:
 ```bash
-python -m uconneats.menu_scraper --days-ahead 2 --halls "south,northwest" --out data/menus_scraped.json
+python -m uconneats.menu_scraper --halls "south,northwest" --out data/menus_scraped.json
 ```
 
 Run with sample local data (no scraper):
@@ -103,11 +103,6 @@ Automatic cache refresh behavior:
 - Cached payload includes official hours scraped from `https://dining.uconn.edu/hours/`, used for hall/day meal-window inference (no hardcoded meal cutoff).
 
 ### Useful Options
-- `--avoid-allergens "peanuts,sesame"`
-- `--diets "vegetarian"`
-- `--meal "Lunch"`
-- `--top-k 3`
-- `--days-ahead 7`
 - `--max-cache-hours 24`
 - `--offline-intent` (skip OpenAI and use local parsing)
 

@@ -104,6 +104,44 @@ def _is_model_not_found_error(exc: BadRequestError) -> bool:
     return code == "model_not_found" or "does not exist" in msg
 
 
+def _responses_text_with_model_fallback(client: OpenAI, model: str, prompt: str) -> str:
+    response = None
+    models_to_try = _candidate_models(model, ["gpt-5-mini", "gpt-4.1-mini"])
+    last_error: Optional[Exception] = None
+    for m in models_to_try:
+        try:
+            response = client.responses.create(model=m, input=prompt)
+            if m != model:
+                print(f"Warning: model '{model}' unavailable; using '{m}' instead.")
+            break
+        except BadRequestError as exc:
+            last_error = exc
+            if _is_model_not_found_error(exc):
+                continue
+            raise
+    if response is None:
+        if last_error:
+            raise last_error
+        raise RuntimeError("Unable to call OpenAI responses API with the configured model.")
+    return (response.output_text or "").strip()
+
+
+def generate_user_reply(client: Optional[OpenAI], model: str, payload: Dict[str, Any]) -> Optional[str]:
+    if client is None:
+        return None
+    prompt = (
+        "You are UConn Eats, a friendly campus dining assistant.\n"
+        "Write a short, conversational response from the provided JSON only.\n"
+        "Rules: use plain language, max 5 listed items, and end with one follow-up question.\n\n"
+        f"JSON:\n{json.dumps(payload, ensure_ascii=True)}"
+    )
+    try:
+        text = _responses_text_with_model_fallback(client, model, prompt)
+        return text if text else None
+    except Exception:
+        return None
+
+
 def load_data(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
@@ -180,28 +218,7 @@ Return JSON only with this schema:
   "allergen_lookup": false
 }}
 """
-    response = None
-    models_to_try = _candidate_models(model, ["gpt-5-mini", "gpt-4.1-mini"])
-    last_error: Optional[Exception] = None
-    for m in models_to_try:
-        try:
-            response = client.responses.create(
-                model=m,
-                input=prompt,
-            )
-            if m != model:
-                print(f"Warning: model '{model}' unavailable; using '{m}' instead.")
-            break
-        except BadRequestError as exc:
-            last_error = exc
-            if _is_model_not_found_error(exc):
-                continue
-            raise
-    if response is None:
-        if last_error:
-            raise last_error
-        raise RuntimeError("Unable to call OpenAI responses API with the configured model.")
-    raw = response.output_text.strip()
+    raw = _responses_text_with_model_fallback(client, model, prompt)
     parsed = safe_json_parse(raw)
     return ParsedIntent(
         craving_terms=[normalize_token(x) for x in parsed.get("craving_terms", [])],
@@ -913,26 +930,22 @@ def requested_food_label(intent: ParsedIntent) -> str:
 
 def print_recommendations(results: List[Dict[str, Any]]) -> None:
     if not results:
-        print("No eligible recommendation found for this time and constraints.")
+        print("I couldn't find a good match right now.")
         return
-    print("\nTop recommendations:")
+    print("\nHere are a few good options:")
     for idx, r in enumerate(results, start=1):
         print(
-            f"{idx}. {r['hall_name']} | {r['meal']} | {r['item_name']} | "
-            f"score={r['score']}"
+            f"{idx}. {r['item_name']} at {r['hall_name']} ({r['meal']})"
         )
-        print(f"   because: {', '.join(r['why'])}")
+        print(f"   Why this one: {', '.join(r['why'])}")
 
 
 def main() -> None:
+    default_top_k = 3
+    default_days_ahead = 7
     load_dotenv(override=True)
     parser = argparse.ArgumentParser(description="UConn Eats CLI recommender (MVP starter).")
     parser.add_argument("--query", required=True, help='Example: "I want pho, avoid peanuts"')
-    parser.add_argument("--meal", default="", help="Optional meal override (Lunch/Dinner)")
-    parser.add_argument("--avoid-allergens", default="", help="Comma-separated allergens")
-    parser.add_argument("--diets", default="", help="Comma-separated diets (vegetarian, vegan, halal)")
-    parser.add_argument("--top-k", type=int, default=3, help="Number of recommendations")
-    parser.add_argument("--days-ahead", type=int, default=7, help="Search window for next availability")
     parser.add_argument(
         "--max-cache-hours",
         type=int,
@@ -951,17 +964,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    explicit_allergens = parse_csv_arg(args.avoid_allergens)
-    explicit_diets = parse_csv_arg(args.diets)
+    explicit_allergens: List[str] = []
+    explicit_diets: List[str] = []
     now_et = datetime.now(ZoneInfo("America/New_York"))
 
     data = ensure_menu_cache(
         data_file=Path(args.data_file),
         now_et=now_et,
         max_cache_hours=args.max_cache_hours,
-        days_ahead=args.days_ahead,
+        days_ahead=default_days_ahead,
     )
     client: Optional[OpenAI] = None
+    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     embedding_model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 
     if args.offline_intent:
@@ -974,7 +988,6 @@ def main() -> None:
             raise RuntimeError(
                 "OPENAI_API_KEY appears to be a placeholder. Put your real key in .env (not .env.example)."
             )
-        model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
         base_url = os.getenv("OPENAI_BASE_URL", "").strip()
         client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
         intent = openai_parse_intent(
@@ -988,11 +1001,11 @@ def main() -> None:
     intent = normalize_intent(intent)
 
     target_date, now_t = resolve_target_dt(intent, now_et)
-    explicit_meal = args.meal if args.meal else (intent.requested_meal or None)
+    explicit_meal = intent.requested_meal or None
     hall_filter = resolve_hall_id(intent.requested_hall, data)
     if not hall_filter:
         hall_filter = extract_hall_from_query_local(args.query, data)
-    print(f"Using target datetime (ET): {target_date} {now_t.strftime('%H:%M')}")
+    print(f"Looking at options for {target_date} around {now_t.strftime('%H:%M')} ET.")
 
     if intent.menu_lookup and hall_filter:
         items = list_menu_items_for_lookup(
@@ -1004,6 +1017,20 @@ def main() -> None:
         hall_name = next((h["hall_name"] for h in data.get("halls", []) if h.get("hall_id") == hall_filter), hall_filter)
         meal_label = explicit_meal or "All Meals"
         if items:
+            llm_reply = generate_user_reply(
+                client,
+                model,
+                {
+                    "mode": "menu_lookup",
+                    "hall": hall_name,
+                    "date": target_date,
+                    "meal": meal_label,
+                    "items": items[:25],
+                },
+            )
+            if llm_reply:
+                print(f"\n{llm_reply}")
+                return
             print(f"\n{hall_name} | {target_date} | {meal_label}")
             for i, item in enumerate(items[:25], start=1):
                 print(f"{i}. {item}")
@@ -1020,6 +1047,18 @@ def main() -> None:
             target_date=target_date,
             hall_filter=hall_filter,
         )
+        llm_reply = generate_user_reply(
+            client,
+            model,
+            {
+                "mode": "hours_lookup",
+                "date": target_date,
+                "rows": rows[:8],
+            },
+        )
+        if llm_reply:
+            print(f"\n{llm_reply}")
+            return
         print_hours_lookup(rows, target_date)
         return
 
@@ -1032,6 +1071,20 @@ def main() -> None:
             hall_filter=hall_filter,
         )
         focus = ", ".join(intent.allergen_terms)
+        llm_reply = generate_user_reply(
+            client,
+            model,
+            {
+                "mode": "allergen_lookup",
+                "date": target_date,
+                "allergens": intent.allergen_terms,
+                "contains_items": contains_lines[:10],
+                "possible_options": safe_lines[:10],
+            },
+        )
+        if llm_reply:
+            print(f"\n{llm_reply}")
+            return
         if contains_lines:
             print(f"\nItems mentioning {focus}:")
             for i, line in enumerate(contains_lines[:10], start=1):
@@ -1057,6 +1110,20 @@ def main() -> None:
         )
         diet_label = ", ".join(intent.preferred_diets)
         meal_label = explicit_meal or "all meals"
+        llm_reply = generate_user_reply(
+            client,
+            model,
+            {
+                "mode": "diet_options",
+                "date": target_date,
+                "meal": meal_label,
+                "diets": intent.preferred_diets,
+                "options": options[:25],
+            },
+        )
+        if llm_reply:
+            print(f"\n{llm_reply}")
+            return
         if options:
             print(f"\n{diet_label.title()} options for {target_date} ({meal_label}):")
             for i, o in enumerate(options, start=1):
@@ -1072,43 +1139,95 @@ def main() -> None:
         target_date=target_date,
         now_t=now_t,
         explicit_meal=explicit_meal,
-        top_k=args.top_k,
+        top_k=default_top_k,
         hall_filter=hall_filter,
     )
-    print_recommendations(results)
+    if results:
+        llm_reply = generate_user_reply(
+            client,
+            model,
+            {
+                "mode": "recommendations",
+                "date": target_date,
+                "time_et": now_t.strftime("%H:%M"),
+                "results": results[:5],
+            },
+        )
+        if llm_reply:
+            print(f"\n{llm_reply}")
+        else:
+            print_recommendations(results)
+    else:
+        print_recommendations(results)
 
     if not results:
         next_option = find_next_available(
             data=data,
             intent=intent,
             start_date=datetime.strptime(target_date, "%Y-%m-%d"),
-            days_ahead=args.days_ahead,
+            days_ahead=default_days_ahead,
         )
         if next_option:
-            print("\nNot available now.")
-            print(
-                f"Next likely match: {next_option['hall_name']} on {next_option['date']} "
-                f"({next_option['meal']}) - {next_option['item_name']}."
+            llm_reply = generate_user_reply(
+                client,
+                model,
+                {
+                    "mode": "next_available",
+                    "query": args.query,
+                    "next_option": next_option,
+                },
             )
+            if llm_reply:
+                print(f"\n{llm_reply}")
+            else:
+                print("\nI couldn't find that right now.")
+                print(
+                    f"The next good match is {next_option['item_name']} at {next_option['hall_name']} "
+                    f"on {next_option['date']} ({next_option['meal']})."
+                )
+                print("Want me to suggest something similar that is available sooner?")
         else:
             if is_diet_options_query(intent):
-                print("\nNo matching dietary options found in the configured lookahead window.")
+                print("\nI couldn't find matching dietary options in the next few days.")
                 return
             similar = suggest_similar_by_embedding(
                 data=data,
                 intent=intent,
                 start_date=datetime.strptime(target_date, "%Y-%m-%d"),
-                days_ahead=args.days_ahead,
+                days_ahead=default_days_ahead,
                 client=client,
                 embedding_model=embedding_model,
             )
             if similar:
-                food = requested_food_label(intent)
-                print(f"\nSorry, but {food} is not on the menu this week, but how about...")
-                for i, s in enumerate(similar, start=1):
-                    print(f"{i}. {s['item_name']} at {s['hall_name']} on {s['date']} ({s['meal']})")
+                llm_reply = generate_user_reply(
+                    client,
+                    model,
+                    {
+                        "mode": "similar_fallback",
+                        "requested_food": requested_food_label(intent),
+                        "suggestions": similar[:5],
+                    },
+                )
+                if llm_reply:
+                    print(f"\n{llm_reply}")
+                else:
+                    food = requested_food_label(intent)
+                    print(f"\nSorry, but {food} is not on the menu this week, but how about...")
+                    for i, s in enumerate(similar, start=1):
+                        print(f"{i}. {s['item_name']} at {s['hall_name']} on {s['date']} ({s['meal']})")
             else:
-                print("\nNo matching item found in the configured lookahead window.")
+                llm_reply = generate_user_reply(
+                    client,
+                    model,
+                    {
+                        "mode": "no_match",
+                        "query": args.query,
+                    },
+                )
+                if llm_reply:
+                    print(f"\n{llm_reply}")
+                else:
+                    print("\nI couldn't find a close match in the next few days.")
 
 
 if __name__ == "__main__":
