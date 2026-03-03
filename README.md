@@ -1,115 +1,141 @@
-﻿# UConn Eats
+# UConn Eats
 
-UConn Eats is a public dining decision app for UConn Storrs that recommends where to eat based on menu match and dietary constraints.
+UConn Eats is a CLI assistant for UConn Storrs dining halls.  
+It answers natural-language questions about menus, hours, allergens, and food options.
 
-## Project Goals
-- Recommend the best open dining hall for the current meal window.
-- Support direct hall menu lookup queries (e.g., "What's for dinner tonight at South?").
-- Suggest the next best time/day if a desired item is not available now.
+## Current Functionality
+- Hall menu lookup from plain-English queries
+- Dining hall hours lookup (from official UConn hours page)
+- Allergen-aware answers (contains/without style questions)
+- Diet-based option listing (for example vegetarian/vegan)
+- General food recommendation and next-best fallback when an item is unavailable
+- GPT-generated user-facing replies based on structured internal results
+- Automatic menu cache refresh (no need to scrape every query)
 
-## Key Features (MVP)
-- Public access (no SSO required)
-- Web-scraped menu and dining hall data from official UConn Dining pages
-- Hard-filtered allergen/dietary constraint handling
-- Explainable recommendation results (why this hall)
-- Hall-specific menu listing when user asks "what's on the menu at <hall>"
-- "Not available now" fallback suggestions
+## Query Types Supported
+- `Menu`: "What's for dinner tonight at South?"
+- `Hours`: "What are South hours tomorrow?"
+- `Allergens`: "Does chicken ramen contain soy?"
+- `Diet options`: "What vegetarian options are there for tomorrow at lunch?"
+- `Recommendation`: "I want Mexican but I'm allergic to peanuts."
 
-## Data Sources
-- Official UConn Dining public website (menus, hall details, hours)
+## Project Structure
+- `uconneats/cli.py`: main CLI app
+- `uconneats/menu_scraper.py`: menu/hours scraper and normalization
+- `data/`: cached and sample data
+- `tests/`: test suite
+- `product-spec.md`: product specification
+- `DEVTEST.md`: developer testing guide
 
-## High-Level Architecture
-- Menu Ingestion Service: scrape -> parse -> normalize -> store
-- Recommendation API: filter + rank halls by user context
-
-## Safety and Constraints
-- Allergen/dietary restrictions are treated as hard constraints.
-- If data cannot verify a requested hard constraint, options are excluded by default.
-- The app surfaces official substitution/allergen disclaimers and advises on-site verification for severe allergies.
-
-## Repository Files
-- `product-spec.md`: full Product Spec v2
-- `README.md`: repository overview and usage context
-- `DEVTEST.md`: developer test plan and test execution guide
-
-## Planned Phases
-1. Phase 0: scraper + normalized storage + initial UI
-2. Phase 1 (MVP): full halls and open-now logic
-3. Phase 2: improved NLP matching, stronger forecasting, personalization
-
-## Status
-Specification phase complete. Implementation scaffolding next.
-
-## CLI Starter (Current Version)
-This repository now includes a CLI prototype:
-- `uconneats/cli.py`: recommend dining halls from query + constraints and support hall menu lookup
-- `data/sample_menus.json`: normalized sample menu data for local testing
-- `.env.example`: environment variable template
-- `requirements.txt`: Python dependencies
-
-### How To Run
-1. Open a terminal in this repository root and install dependencies:
+## Setup
+1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
-2. Create an environment file:
+2. Create env file:
 ```bash
 copy .env.example .env
 ```
-3. Edit `.env` and set:
+3. Set env values:
 ```env
 OPENAI_API_KEY=your_api_key_here
 OPENAI_MODEL=gpt-5.3-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_BASE_URL=
 ```
-If your key requires a custom endpoint, set:
-`OPENAI_BASE_URL=https://us.api.openai.com/v1`
-4. Scrape live menus from the official nutrition site:
+
+If your account/endpoint does not support the configured model, the app automatically falls back to available models.
+
+## Run
+Scrape data:
 ```bash
 python -m uconneats.menu_scraper --out data/menus_scraped.json
 ```
-5. Run recommendations with OpenAI intent parsing:
+
+Run CLI:
 ```bash
-python -m uconneats.cli --query "I want pho for lunch today" --data-file data/menus_scraped.json
-```
-6. Optional: run without OpenAI using local parsing only:
-```bash
-python -m uconneats.cli --query "I want ramen tomorrow at 6:30 pm" --offline-intent --data-file data/menus_scraped.json
+python -m uconneats.cli --query "What's for dinner tonight at South?" --data-file data/menus_scraped.json
 ```
 
-### Additional Commands
-Scrape selected halls only:
+Offline mode (no OpenAI call):
 ```bash
-python -m uconneats.menu_scraper --halls "south,northwest" --out data/menus_scraped.json
+python -m uconneats.cli --query "What are South hours tomorrow?" --offline-intent --data-file data/menus_scraped.json
 ```
 
-Run with sample local data (no scraper):
+## Examples (Input -> Output Style)
+1. Menu lookup  
+Input:
 ```bash
-python -m uconneats.cli --query "I want pho" --offline-intent --data-file data/sample_menus.json
+python -m uconneats.cli --query "What's for dinner tonight at South?"
+```
+Output style:
+```text
+South | 2026-02-17 | Dinner
+1. ...
+2. ...
+Is there something special you want to eat?
 ```
 
-Menu lookup example:
+2. Hours lookup  
+Input:
 ```bash
-python -m uconneats.cli --query "Whats for dinner tonight at South?" --data-file data/menus_scraped.json
+python -m uconneats.cli --query "What are South hours tomorrow?"
 ```
-When the query is a menu lookup and a hall is identified, the app returns the menu items for that hall/date/meal and asks:
-`Is there something special you want to eat?`
+Output style:
+```text
+Dining hall hours for 2026-02-18:
+South:
+  - Breakfast: 07:00 - 10:45
+  - Lunch: 11:00 - 15:00
+  - Dinner: 16:30 - 19:15
+Do you want menu options for one of these halls?
+```
 
-Automatic cache refresh behavior:
-- Default `--data-file` is `data/menus_scraped.json`.
-- On each query, the app refreshes only if cache is missing, unreadable, older than `--max-cache-hours` (default 24), or missing today's ET menu.
-- Otherwise it uses cached menus (no web scrape on that query).
-- Cached payload includes official hours scraped from `https://dining.uconn.edu/hours/`, used for hall/day meal-window inference (no hardcoded meal cutoff).
+3. Allergen question  
+Input:
+```bash
+python -m uconneats.cli --query "Does chicken ramen contain soy?"
+```
+Output style:
+```text
+Items mentioning soy:
+1. ...
+Possible options without soy:
+1. ...
+Would you like me to narrow this by hall or meal?
+```
 
-### Useful Options
-- `--max-cache-hours 24`
-- `--offline-intent` (skip OpenAI and use local parsing)
+4. Diet options  
+Input:
+```bash
+python -m uconneats.cli --query "What vegetarian options there are for tomorrow at lunch?"
+```
+Output style:
+```text
+Vegetarian options for 2026-02-18 (Lunch):
+1. ...
+2. ...
+Is there something special you want to eat?
+```
 
-Date/time behavior:
-- The app extracts target date/time from `--query` when present.
-- If not present, it defaults to current `America/New_York` system time.
+5. Unavailable item fallback  
+Input:
+```bash
+python -m uconneats.cli --query "I want ramen tonight"
+```
+Output style:
+```text
+I couldn't find that right now.
+The next good match is ... on ... (...).
+Want me to suggest something similar that is available sooner?
+```
 
-Fallback behavior:
-- If no direct match is found in lookahead, the app can suggest semantically similar dishes using OpenAI embeddings.
-- This similarity fallback requires OpenAI mode (not `--offline-intent`).
+## Cache Behavior
+- Default data file: `data/menus_scraped.json`
+- Auto-refresh triggers when cache is missing, unreadable, stale, or missing current ET date
+- Otherwise cache is reused for fast responses
+
+## Testing
+```bash
+pytest -q
+```
