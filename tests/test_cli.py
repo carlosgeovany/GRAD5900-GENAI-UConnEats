@@ -23,18 +23,6 @@ def test_parse_datetime_from_query_local_meal_and_today():
     assert meal == "Lunch"
 
 
-def test_local_parse_intent_keeps_tokens_and_no_stopword_filter():
-    now_et = datetime(2026, 2, 17, 9, 0, 0)
-    parsed = cli.local_parse_intent(
-        query="I want pho",
-        explicit_allergens=[],
-        explicit_diets=[],
-        now_et=now_et,
-    )
-    # Stopword removal was intentionally removed; tokens should keep raw words.
-    assert parsed.craving_terms == ["i", "want", "pho"]
-
-
 def test_choose_meal_from_official_hours_picks_current_window():
     entry = {
         "hall_id": "south",
@@ -236,3 +224,90 @@ def test_list_hours_for_lookup():
     assert len(rows) == 1
     assert rows[0]["hall_name"] == "South"
     assert "Lunch" in rows[0]["meals"]
+
+
+def test_run_query_returns_formatted_text(monkeypatch, tmp_path):
+    fake_data = {
+        "generated_at": "2026-02-17T08:30:00-05:00",
+        "halls": [{"hall_id": "south", "hall_name": "South"}],
+        "menus": [
+            {
+                "menu_date": "2026-02-17",
+                "hall_id": "south",
+                "hall_name": "South",
+                "meals": {"Dinner": [{"item_name": "BBQ Tofu", "station": "Grill", "allergens": [], "diet_tags": ["vegan"]}]},
+            }
+        ],
+        "official_hours": {},
+    }
+
+    monkeypatch.setattr(cli, "ensure_menu_cache", lambda data_file, now_et, max_cache_hours, days_ahead: fake_data)
+    monkeypatch.setattr(
+        cli,
+        "datetime",
+        SimpleNamespace(
+            now=lambda tz=None: datetime(2026, 2, 17, 18, 0, tzinfo=tz),
+            strptime=datetime.strptime,
+        ),
+    )
+    monkeypatch.setattr(cli, "build_openai_client", lambda api_key, base_url: object())
+    monkeypatch.setattr(
+        cli,
+        "openai_parse_intent",
+        lambda client, model, query, explicit_allergens, explicit_diets, now_et: cli.ParsedIntent(
+            craving_terms=["what's", "for", "dinner", "tonight", "at", "south?"],
+            cuisine_hints=[],
+            avoid_allergens=[],
+            allergen_terms=[],
+            preferred_diets=[],
+            requested_date="2026-02-17",
+            requested_time=None,
+            requested_meal="Dinner",
+            requested_hall="South",
+            menu_lookup=True,
+            hours_lookup=False,
+            allergen_lookup=False,
+        ),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    output = cli.run_query(
+        query="What's for dinner tonight at South?",
+        data_file=tmp_path / "menus.json",
+        max_cache_hours=24,
+    )
+    assert "South is serving dinner on 2026-02-17" in output
+    assert "BBQ Tofu" in output
+
+
+def test_format_hours_lookup_is_conversational():
+    text = cli.format_hours_lookup(
+        [
+            {
+                "hall_name": "South",
+                "meals": {
+                    "Breakfast": {"start": "07:00", "end": "10:45"},
+                    "Lunch": {"start": "11:00", "end": "15:00"},
+                },
+            }
+        ],
+        "2026-02-18",
+    )
+    assert "South is open" in text
+    assert "Breakfast from 07:00 to 10:45" in text
+    assert "show what one of those halls is serving" in text
+
+
+def test_format_recommendations_is_conversational():
+    text = cli.format_recommendations(
+        [
+            {
+                "item_name": "Chicken Ramen",
+                "hall_name": "Northwest",
+                "meal": "Dinner",
+                "why": ["matches your craving", "is available now"],
+            }
+        ]
+    )
+    assert "A few good options right now are" in text
+    assert "Chicken Ramen at Northwest for Dinner" in text

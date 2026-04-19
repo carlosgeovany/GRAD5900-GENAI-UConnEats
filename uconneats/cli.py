@@ -1,9 +1,11 @@
 import argparse
+import io
 import json
 import math
 import os
 import re
 import requests
+from contextlib import redirect_stdout
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from pathlib import Path
@@ -86,6 +88,11 @@ GENERIC_QUERY_TOKENS = {
     "dinner",
 }
 
+DEFAULT_TOP_K = 3
+DEFAULT_DAYS_AHEAD = 7
+DEFAULT_MAX_CACHE_HOURS = 24
+DEFAULT_DATA_FILE = Path(__file__).parent.parent / "data" / "menus_scraped.json"
+
 
 def _candidate_models(primary: str, fallbacks: List[str]) -> List[str]:
     out: List[str] = []
@@ -140,6 +147,129 @@ def generate_user_reply(client: Optional[OpenAI], model: str, payload: Dict[str,
         return text if text else None
     except Exception:
         return None
+
+
+def natural_join(items: List[str]) -> str:
+    cleaned = [item.strip() for item in items if item and item.strip()]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+    if len(cleaned) == 2:
+        return f"{cleaned[0]} and {cleaned[1]}"
+    return f"{', '.join(cleaned[:-1])}, and {cleaned[-1]}"
+
+
+def format_menu_lookup(hall_name: str, target_date: str, meal_label: str, items: List[str]) -> str:
+    if not items:
+        return (
+            f"I couldn't find menu items for {hall_name} on {target_date} during {meal_label}. "
+            "Try another hall, meal, or date and I'll take another look."
+        )
+    highlights = natural_join(items[:5])
+    extra = f" There are {len(items) - 5} more items as well." if len(items) > 5 else ""
+    return (
+        f"{hall_name} is serving {meal_label.lower()} on {target_date}. "
+        f"Some options I found are {highlights}.{extra} "
+        "If you want, I can narrow that down by diet, allergen, or craving."
+    )
+
+
+def format_hours_lookup(hours_rows: List[Dict[str, Any]], target_date: str) -> str:
+    if not hours_rows:
+        return (
+            f"I couldn't find dining hall hours for {target_date}. "
+            "Try another date or hall, and I can check again."
+        )
+
+    hall_summaries = []
+    for row in hours_rows[:4]:
+        windows = [
+            f"{meal} from {window['start']} to {window['end']}"
+            for meal, window in row["meals"].items()
+        ]
+        hall_summaries.append(f"{row['hall_name']} is open for {natural_join(windows)}")
+
+    summary = " ".join(f"{entry}." for entry in hall_summaries)
+    if len(hours_rows) > 4:
+        summary += f" I found hours for {len(hours_rows) - 4} more halls too."
+    return summary + " If you want, I can also show what one of those halls is serving."
+
+
+def format_allergen_lookup(
+    contains_lines: List[str],
+    safe_lines: List[str],
+    focus: str,
+    target_date: str,
+) -> str:
+    if not contains_lines and not safe_lines:
+        return (
+            f"I couldn't find clear allergen-specific results for {focus} on {target_date}. "
+            "Try adding a hall, meal, or item name and I can narrow it down."
+        )
+
+    parts: List[str] = []
+    if contains_lines:
+        parts.append(
+            f"I found a few items that mention {focus}, including {natural_join(contains_lines[:3])}."
+        )
+    if safe_lines:
+        parts.append(
+            f"I also found possible options without {focus}, such as {natural_join(safe_lines[:3])}."
+        )
+    parts.append("If you want, I can narrow that down by hall or meal.")
+    return " ".join(parts)
+
+
+def format_diet_options(options: List[Dict[str, str]], diet_label: str, target_date: str, meal_label: str) -> str:
+    if not options:
+        return (
+            f"I couldn't find {diet_label} options for {target_date} during {meal_label}. "
+            "Try another hall, meal, or date and I can check again."
+        )
+    picks = natural_join(
+        [f"{option['item_name']} at {option['hall_name']} for {option['meal']}" for option in options[:5]]
+    )
+    extra = f" There are {len(options) - 5} more matches too." if len(options) > 5 else ""
+    return (
+        f"I found some {diet_label} options for {target_date} during {meal_label}. "
+        f"A few good ones are {picks}.{extra} "
+        "If you want, I can also filter those by hall or allergen."
+    )
+
+
+def format_recommendations(results: List[Dict[str, Any]]) -> str:
+    if not results:
+        return "I couldn't find a good match right now."
+    picks = []
+    for result in results[:3]:
+        reason = natural_join(result.get("why", [])[:2])
+        if reason:
+            picks.append(f"{result['item_name']} at {result['hall_name']} for {result['meal']} because it {reason}")
+        else:
+            picks.append(f"{result['item_name']} at {result['hall_name']} for {result['meal']}")
+    return (
+        f"A few good options right now are {natural_join(picks)}. "
+        "If you want, I can narrow that down by dining hall, meal, or dietary preference."
+    )
+
+
+def format_next_available(next_option: Dict[str, Any]) -> str:
+    return (
+        f"I couldn't find that exact match right now, but the next good option is "
+        f"{next_option['item_name']} at {next_option['hall_name']} on {next_option['date']} during {next_option['meal']}. "
+        "If you want, I can also suggest similar dishes that show up sooner."
+    )
+
+
+def format_similar_fallback(food: str, suggestions: List[Dict[str, str]]) -> str:
+    picks = natural_join(
+        [f"{item['item_name']} at {item['hall_name']} on {item['date']} during {item['meal']}" for item in suggestions[:4]]
+    )
+    return (
+        f"I couldn't find {food} on the menu this week, but a few similar options are {picks}. "
+        "If you want, I can keep narrowing by hall, meal, or cuisine."
+    )
 
 
 def load_data(path: Path) -> Dict[str, Any]:
@@ -738,15 +868,7 @@ def list_hours_for_lookup(
 
 
 def print_hours_lookup(hours_rows: List[Dict[str, Any]], target_date: str) -> None:
-    if not hours_rows:
-        print(f"\nNo hours found for {target_date}.")
-        return
-    print(f"\nDining hall hours for {target_date}:")
-    for row in hours_rows:
-        print(f"{row['hall_name']}:")
-        for meal, window in row["meals"].items():
-            print(f"  - {meal}: {window['start']} - {window['end']}")
-    print("\nDo you want menu options for one of these halls?")
+    print(f"\n{format_hours_lookup(hours_rows, target_date)}")
 
 
 def allergen_match(item: Dict[str, Any], allergen_terms: List[str]) -> bool:
@@ -929,82 +1051,59 @@ def requested_food_label(intent: ParsedIntent) -> str:
 
 
 def print_recommendations(results: List[Dict[str, Any]]) -> None:
-    if not results:
-        print("I couldn't find a good match right now.")
-        return
-    print("\nHere are a few good options:")
-    for idx, r in enumerate(results, start=1):
-        print(
-            f"{idx}. {r['item_name']} at {r['hall_name']} ({r['meal']})"
+    print(f"\n{format_recommendations(results)}")
+
+
+def build_openai_client(api_key: str, base_url: str) -> OpenAI:
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is required. Set it in your environment or .env file.")
+    if api_key.startswith("your_") or api_key.startswith("<") or "api_key_here" in api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY appears to be a placeholder. Put your real key in .env (not .env.example)."
         )
-        print(f"   Why this one: {', '.join(r['why'])}")
+    return OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
 
 
-def main() -> None:
-    default_top_k = 3
-    default_days_ahead = 7
+def _execute_query(
+    query: str,
+    data_file: Path,
+    max_cache_hours: int,
+    explicit_allergens: Optional[List[str]] = None,
+    explicit_diets: Optional[List[str]] = None,
+) -> None:
     load_dotenv(override=True)
-    parser = argparse.ArgumentParser(description="UConn Eats CLI recommender (MVP starter).")
-    parser.add_argument("--query", required=True, help='Example: "I want pho, avoid peanuts"')
-    parser.add_argument(
-        "--max-cache-hours",
-        type=int,
-        default=24,
-        help="Auto-refresh scraped menu cache when older than this many hours",
-    )
-    parser.add_argument(
-        "--data-file",
-        default=str(Path(__file__).parent.parent / "data" / "menus_scraped.json"),
-        help="Path to normalized menu data JSON",
-    )
-    parser.add_argument(
-        "--offline-intent",
-        action="store_true",
-        help="Skip OpenAI parsing and use local token parsing",
-    )
-    args = parser.parse_args()
-
-    explicit_allergens: List[str] = []
-    explicit_diets: List[str] = []
+    explicit_allergens = explicit_allergens or []
+    explicit_diets = explicit_diets or []
     now_et = datetime.now(ZoneInfo("America/New_York"))
 
     data = ensure_menu_cache(
-        data_file=Path(args.data_file),
+        data_file=data_file,
         now_et=now_et,
-        max_cache_hours=args.max_cache_hours,
-        days_ahead=default_days_ahead,
+        max_cache_hours=max_cache_hours,
+        days_ahead=DEFAULT_DAYS_AHEAD,
     )
     client: Optional[OpenAI] = None
     model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     embedding_model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 
-    if args.offline_intent:
-        intent = local_parse_intent(args.query, explicit_allergens, explicit_diets, now_et)
-    else:
-        api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is required. Set it in your environment or .env file.")
-        if api_key.startswith("your_") or api_key.startswith("<") or "api_key_here" in api_key:
-            raise RuntimeError(
-                "OPENAI_API_KEY appears to be a placeholder. Put your real key in .env (not .env.example)."
-            )
-        base_url = os.getenv("OPENAI_BASE_URL", "").strip()
-        client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
-        intent = openai_parse_intent(
-            client=client,
-            model=model,
-            query=args.query,
-            explicit_allergens=explicit_allergens,
-            explicit_diets=explicit_diets,
-            now_et=now_et,
-        )
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+    client = build_openai_client(api_key=api_key, base_url=base_url)
+    intent = openai_parse_intent(
+        client=client,
+        model=model,
+        query=query,
+        explicit_allergens=explicit_allergens,
+        explicit_diets=explicit_diets,
+        now_et=now_et,
+    )
     intent = normalize_intent(intent)
 
     target_date, now_t = resolve_target_dt(intent, now_et)
     explicit_meal = intent.requested_meal or None
     hall_filter = resolve_hall_id(intent.requested_hall, data)
     if not hall_filter:
-        hall_filter = extract_hall_from_query_local(args.query, data)
+        hall_filter = extract_hall_from_query_local(query, data)
     print(f"Looking at options for {target_date} around {now_t.strftime('%H:%M')} ET.")
 
     if intent.menu_lookup and hall_filter:
@@ -1031,14 +1130,9 @@ def main() -> None:
             if llm_reply:
                 print(f"\n{llm_reply}")
                 return
-            print(f"\n{hall_name} | {target_date} | {meal_label}")
-            for i, item in enumerate(items[:25], start=1):
-                print(f"{i}. {item}")
-            if len(items) > 25:
-                print(f"...and {len(items) - 25} more items.")
+            print(f"\n{format_menu_lookup(hall_name, target_date, meal_label, items)}")
         else:
-            print(f"\nNo menu items found for {hall_name} on {target_date} ({meal_label}).")
-        print("\nIs there something special you want to eat?")
+            print(f"\n{format_menu_lookup(hall_name, target_date, meal_label, items)}")
         return
 
     if intent.hours_lookup:
@@ -1085,17 +1179,7 @@ def main() -> None:
         if llm_reply:
             print(f"\n{llm_reply}")
             return
-        if contains_lines:
-            print(f"\nItems mentioning {focus}:")
-            for i, line in enumerate(contains_lines[:10], start=1):
-                print(f"{i}. {line}")
-        if safe_lines:
-            print(f"\nPossible options without {focus}:")
-            for i, line in enumerate(safe_lines[:10], start=1):
-                print(f"{i}. {line}")
-        if not contains_lines and not safe_lines:
-            print(f"\nI could not find allergen-specific results for {focus} on {target_date}.")
-        print("\nWould you like me to narrow this by hall or meal?")
+        print(f"\n{format_allergen_lookup(contains_lines, safe_lines, focus, target_date)}")
         return
 
     if is_diet_options_query(intent):
@@ -1124,13 +1208,7 @@ def main() -> None:
         if llm_reply:
             print(f"\n{llm_reply}")
             return
-        if options:
-            print(f"\n{diet_label.title()} options for {target_date} ({meal_label}):")
-            for i, o in enumerate(options, start=1):
-                print(f"{i}. {o['item_name']} at {o['hall_name']} ({o['meal']})")
-        else:
-            print(f"\nNo {diet_label} options found for {target_date} ({meal_label}).")
-        print("\nIs there something special you want to eat?")
+        print(f"\n{format_diet_options(options, diet_label, target_date, meal_label)}")
         return
 
     results = recommend(
@@ -1139,18 +1217,18 @@ def main() -> None:
         target_date=target_date,
         now_t=now_t,
         explicit_meal=explicit_meal,
-        top_k=default_top_k,
+        top_k=DEFAULT_TOP_K,
         hall_filter=hall_filter,
     )
     if results:
         llm_reply = generate_user_reply(
             client,
             model,
-            {
-                "mode": "recommendations",
-                "date": target_date,
-                "time_et": now_t.strftime("%H:%M"),
-                "results": results[:5],
+                {
+                    "mode": "recommendations",
+                    "date": target_date,
+                    "time_et": now_t.strftime("%H:%M"),
+                    "results": results[:5],
             },
         )
         if llm_reply:
@@ -1165,7 +1243,7 @@ def main() -> None:
             data=data,
             intent=intent,
             start_date=datetime.strptime(target_date, "%Y-%m-%d"),
-            days_ahead=default_days_ahead,
+            days_ahead=DEFAULT_DAYS_AHEAD,
         )
         if next_option:
             llm_reply = generate_user_reply(
@@ -1173,19 +1251,14 @@ def main() -> None:
                 model,
                 {
                     "mode": "next_available",
-                    "query": args.query,
+                    "query": query,
                     "next_option": next_option,
                 },
             )
             if llm_reply:
                 print(f"\n{llm_reply}")
             else:
-                print("\nI couldn't find that right now.")
-                print(
-                    f"The next good match is {next_option['item_name']} at {next_option['hall_name']} "
-                    f"on {next_option['date']} ({next_option['meal']})."
-                )
-                print("Want me to suggest something similar that is available sooner?")
+                print(f"\n{format_next_available(next_option)}")
         else:
             if is_diet_options_query(intent):
                 print("\nI couldn't find matching dietary options in the next few days.")
@@ -1194,7 +1267,7 @@ def main() -> None:
                 data=data,
                 intent=intent,
                 start_date=datetime.strptime(target_date, "%Y-%m-%d"),
-                days_ahead=default_days_ahead,
+                days_ahead=DEFAULT_DAYS_AHEAD,
                 client=client,
                 embedding_model=embedding_model,
             )
@@ -1212,22 +1285,63 @@ def main() -> None:
                     print(f"\n{llm_reply}")
                 else:
                     food = requested_food_label(intent)
-                    print(f"\nSorry, but {food} is not on the menu this week, but how about...")
-                    for i, s in enumerate(similar, start=1):
-                        print(f"{i}. {s['item_name']} at {s['hall_name']} on {s['date']} ({s['meal']})")
+                    print(f"\n{format_similar_fallback(food, similar)}")
             else:
                 llm_reply = generate_user_reply(
                     client,
                     model,
                     {
                         "mode": "no_match",
-                        "query": args.query,
+                        "query": query,
                     },
                 )
                 if llm_reply:
                     print(f"\n{llm_reply}")
                 else:
                     print("\nI couldn't find a close match in the next few days.")
+
+
+def run_query(
+    query: str,
+    data_file: str | Path = DEFAULT_DATA_FILE,
+    max_cache_hours: int = DEFAULT_MAX_CACHE_HOURS,
+    explicit_allergens: Optional[List[str]] = None,
+    explicit_diets: Optional[List[str]] = None,
+) -> str:
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        _execute_query(
+            query=query,
+            data_file=Path(data_file),
+            max_cache_hours=max_cache_hours,
+            explicit_allergens=explicit_allergens,
+            explicit_diets=explicit_diets,
+        )
+    return buffer.getvalue().strip()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="UConn Eats CLI recommender (MVP starter).")
+    parser.add_argument("--query", required=True, help='Example: "I want pho, avoid peanuts"')
+    parser.add_argument(
+        "--max-cache-hours",
+        type=int,
+        default=DEFAULT_MAX_CACHE_HOURS,
+        help="Auto-refresh scraped menu cache when older than this many hours",
+    )
+    parser.add_argument(
+        "--data-file",
+        default=str(DEFAULT_DATA_FILE),
+        help="Path to normalized menu data JSON",
+    )
+    args = parser.parse_args()
+    output = run_query(
+        query=args.query,
+        data_file=args.data_file,
+        max_cache_hours=args.max_cache_hours,
+    )
+    if output:
+        print(output)
 
 
 if __name__ == "__main__":

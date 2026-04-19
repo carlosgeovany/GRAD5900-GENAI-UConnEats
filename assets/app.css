@@ -1,0 +1,63 @@
+.stApp {
+    background:
+        radial-gradient(circle at top right, rgba(255, 204, 82, 0.35), transparent 28%),
+        radial-gradient(circle at top left, rgba(17, 68, 120, 0.25), transparent 22%),
+        linear-gradient(180deg, #fffaf0 0%, #f7f1e6 48%, #efe5d4 100%);
+}
+
+.block-container {
+    max-width: 980px;
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+}
+
+.hero-card {
+    padding: 1.4rem 1.5rem;
+    border-radius: 20px;
+    background: rgba(255, 252, 247, 0.9);
+    border: 1px solid rgba(91, 60, 17, 0.12);
+    box-shadow: 0 18px 40px rgba(91, 60, 17, 0.10);
+    margin-bottom: 1rem;
+}
+
+.hero-title {
+    font-size: 2.2rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: #143a5c;
+    margin-bottom: 0.35rem;
+}
+
+.hero-copy {
+    color: #5b4a37;
+    font-size: 1rem;
+    line-height: 1.5;
+}
+
+.helper-copy {
+    color: #2f2418;
+    font-size: 0.98rem;
+    line-height: 1.55;
+    margin: 0.4rem 0 1rem 0;
+}
+
+[data-testid="stChatMessage"] {
+    border-radius: 18px;
+    background: rgba(255, 252, 247, 0.85);
+    border: 1px solid rgba(20, 58, 92, 0.08);
+    box-shadow: 0 10px 24px rgba(91, 60, 17, 0.08);
+    padding: 0.35rem 0.2rem;
+    color: #111111;
+}
+
+[data-testid="stChatMessage"] * {
+    color: #111111 !important;
+}
+
+[data-testid="stSidebar"] {
+    background: rgba(20, 58, 92, 0.95);
+}
+
+[data-testid="stSidebar"] * {
+    color: #fffaf0;
+}

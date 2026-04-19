@@ -1,30 +1,40 @@
 # UConn Eats
 
-UConn Eats is a CLI assistant for UConn Storrs dining halls.  
-It answers natural-language questions about menus, hours, allergens, and food options.
+UConn Eats is a prompt-based dining assistant for UConn Storrs dining halls. It answers natural-language questions about menus, hours, allergens, and food options through a Streamlit web UI and uses the OpenAI API for both intent understanding and reply generation.
 
-## Current Functionality
-- Hall menu lookup from plain-English queries
-- Dining hall hours lookup (from official UConn hours page)
-- Allergen-aware answers (contains/without style questions)
-- Diet-based option listing (for example vegetarian/vegan)
-- General food recommendation and next-best fallback when an item is unavailable
-- GPT-generated user-facing replies based on structured internal results
-- Automatic menu cache refresh (no need to scrape every query)
+## Current State
+- Primary interface: Streamlit chat app
+- Secondary interface: CLI entrypoint for debugging and smoke tests
+- Runtime mode: LLM-only
+- Data sources:
+  - Menus and nutrition pages from `https://dining.uconn.edu/nutrition/`
+  - Hours from `https://dining.uconn.edu/hours/`
+- Styling: dedicated stylesheet in `assets/app.css`
 
-## Query Types Supported
-- `Menu`: "What's for dinner tonight at South?"
-- `Hours`: "What are South hours tomorrow?"
-- `Allergens`: "Does chicken ramen contain soy?"
-- `Diet options`: "What vegetarian options are there for tomorrow at lunch?"
-- `Recommendation`: "I want Mexican but I'm allergic to peanuts."
+## What the App Can Do
+- Menu lookup from plain-English prompts
+- Dining hall hours lookup using the official UConn Dining hours page
+- Allergen-aware answers
+- Diet-based option listing such as vegetarian or vegan options
+- General recommendation and next-best fallback when an item is unavailable
+- Conversational responses generated from structured dining results
+- Automatic cache refresh when data is stale or missing current ET menu data
+
+## Query Examples
+- `What's for dinner tonight at South?`
+- `What are South hours tomorrow?`
+- `Does chicken ramen contain soy?`
+- `What vegetarian options are there for tomorrow at lunch?`
+- `I want Mexican but I'm allergic to peanuts.`
 
 ## Project Structure
-- `uconneats/cli.py`: main CLI app
-- `uconneats/menu_scraper.py`: menu/hours scraper and normalization
+- `app.py`: Streamlit prompt UI
+- `assets/app.css`: dedicated app styling
+- `uconneats/cli.py`: shared query pipeline and CLI entrypoint
+- `uconneats/menu_scraper.py`: menu and hours scraper
 - `data/`: cached and sample data
 - `tests/`: test suite
-- `product-spec.md`: product specification
+- `product-spec.md`: project specification
 - `DEVTEST.md`: developer testing guide
 
 ## Setup
@@ -32,110 +42,80 @@ It answers natural-language questions about menus, hours, allergens, and food op
 ```bash
 pip install -r requirements.txt
 ```
-2. Create env file:
+2. Create the env file:
 ```bash
 copy .env.example .env
 ```
-3. Set env values:
+3. Set environment values:
 ```env
-OPENAI_API_KEY=your_api_key_here
-OPENAI_MODEL=gpt-5.3-mini
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-5-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_BASE_URL=
 ```
 
-If your account/endpoint does not support the configured model, the app automatically falls back to available models.
+`OPENAI_API_KEY` is required in the current version. The project no longer includes an offline intent mode.
+
+If your endpoint does not support the configured model, the runtime falls back to another supported OpenAI model when possible.
 
 ## Run
-Scrape data:
+Prompt UI:
+```bash
+streamlit run app.py
+```
+
+Then open the local URL Streamlit prints in the terminal.
+
+Refresh scraped data manually:
 ```bash
 python -m uconneats.menu_scraper --out data/menus_scraped.json
 ```
 
-Run CLI:
+Run the CLI directly:
 ```bash
 python -m uconneats.cli --query "What's for dinner tonight at South?" --data-file data/menus_scraped.json
 ```
 
-Offline mode (no OpenAI call):
-```bash
-python -m uconneats.cli --query "What are South hours tomorrow?" --offline-intent --data-file data/menus_scraped.json
+The Streamlit app is the intended day-to-day interface. The CLI is mainly useful for debugging the shared query engine.
+
+## Output Style
+Menu lookup:
+```text
+South is serving dinner on 2026-02-17. Some options I found are ... If you want, I can narrow that down by diet, allergen, or craving.
 ```
 
-## Examples (Input -> Output Style)
-1. Menu lookup  
-Input:
-```bash
-python -m uconneats.cli --query "What's for dinner tonight at South?"
-```
-Output style:
+Hours lookup:
 ```text
-South | 2026-02-17 | Dinner
-1. ...
-2. ...
-Is there something special you want to eat?
+South is open for Breakfast from 07:00 to 10:45, Lunch from 11:00 to 15:00, and Dinner from 16:30 to 19:15. If you want, I can also show what one of those halls is serving.
 ```
 
-2. Hours lookup  
-Input:
-```bash
-python -m uconneats.cli --query "What are South hours tomorrow?"
-```
-Output style:
+Allergen lookup:
 ```text
-Dining hall hours for 2026-02-18:
-South:
-  - Breakfast: 07:00 - 10:45
-  - Lunch: 11:00 - 15:00
-  - Dinner: 16:30 - 19:15
-Do you want menu options for one of these halls?
+I found a few items that mention soy, and I also found possible options without soy. If you want, I can narrow that down by hall or meal.
 ```
 
-3. Allergen question  
-Input:
-```bash
-python -m uconneats.cli --query "Does chicken ramen contain soy?"
-```
-Output style:
+Diet options:
 ```text
-Items mentioning soy:
-1. ...
-Possible options without soy:
-1. ...
-Would you like me to narrow this by hall or meal?
+I found some vegetarian options for 2026-02-18 during lunch. A few good ones are ... If you want, I can also filter those by hall or allergen.
 ```
 
-4. Diet options  
-Input:
-```bash
-python -m uconneats.cli --query "What vegetarian options there are for tomorrow at lunch?"
-```
-Output style:
+Unavailable item fallback:
 ```text
-Vegetarian options for 2026-02-18 (Lunch):
-1. ...
-2. ...
-Is there something special you want to eat?
+I couldn't find that exact match right now, but the next good option is ... If you want, I can also suggest similar dishes that show up sooner.
 ```
 
-5. Unavailable item fallback  
-Input:
-```bash
-python -m uconneats.cli --query "I want ramen tonight"
-```
-Output style:
-```text
-I couldn't find that right now.
-The next good match is ... on ... (...).
-Want me to suggest something similar that is available sooner?
-```
+## Data and Hours
+- Default cache file: `data/menus_scraped.json`
+- Menu source: `https://dining.uconn.edu/nutrition/`
+- Hours source: `https://dining.uconn.edu/hours/`
+- The hours parser supports the current content structure on the official UConn Dining hours page, including weekday and weekend hall windows.
 
 ## Cache Behavior
 - Default data file: `data/menus_scraped.json`
-- Auto-refresh triggers when cache is missing, unreadable, stale, or missing current ET date
+- Auto-refresh triggers when cache is missing, unreadable, stale, or missing current ET menu data
 - Otherwise cache is reused for fast responses
 
 ## Testing
 ```bash
-pytest -q
+python -m pytest -q
 ```

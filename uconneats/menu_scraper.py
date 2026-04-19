@@ -16,6 +16,10 @@ DATE_PARAM = "dtdate"
 USER_AGENT = "UConnEatsBot/0.1 (academic project CLI prototype)"
 MEAL_NAMES = {"breakfast", "lunch", "dinner", "brunch", "late night"}
 DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+HOURS_CONTENT_SELECTORS = [".entry-content", "article", "main", ".site-content"]
+WEEKDAY_HOURS_MARKERS = ["MONDAY through FRIDAY HOURS", "MONDAY through FRIDAY"]
+WEEKEND_HOURS_MARKERS = ["WEEKEND HOURS"]
+HOURS_END_MARKERS = ["KOSHER & HALAL", "Semester Reminders", "Winter Weather Guidelines"]
 
 
 def normalize_space(text: str) -> str:
@@ -176,28 +180,46 @@ def merge_hours(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
     return merged
 
 
+def find_marker(text: str, markers: List[str]) -> Tuple[int, Optional[str]]:
+    for marker in markers:
+        idx = text.find(marker)
+        if idx >= 0:
+            return idx, marker
+    return -1, None
+
+
+def extract_hours_page_text(soup: BeautifulSoup) -> str:
+    for selector in HOURS_CONTENT_SELECTORS:
+        node = soup.select_one(selector)
+        if not node:
+            continue
+        text = node.get_text("\n", strip=True)
+        if "MONDAY through FRIDAY" in text and "WEEKEND HOURS" in text:
+            return text
+
+    blobs = soup.select(".textwidget")
+    if blobs:
+        blob_text = "\n".join(blob.get_text("\n", strip=True) for blob in blobs)
+        if "MONDAY through FRIDAY" in blob_text and "WEEKEND HOURS" in blob_text:
+            return blob_text
+
+    return soup.get_text("\n", strip=True)
+
+
 def scrape_official_hours(session: requests.Session) -> Dict[str, Any]:
     soup = fetch_soup(session, HOURS_URL)
-    blobs = soup.select(".textwidget")
-    page_text = ""
-    for b in blobs:
-        txt = b.get_text("\n", strip=True)
-        if "MONDAY through FRIDAY HOURS" in txt and "WEEKEND HOURS" in txt:
-            page_text = txt
-            break
-    if not page_text:
-        page_text = soup.get_text("\n", strip=True)
+    page_text = extract_hours_page_text(soup)
 
-    start_wk = page_text.find("MONDAY through FRIDAY HOURS")
-    start_we = page_text.find("WEEKEND HOURS")
-    end_we = page_text.find("KOSHER & HALAL")
-    if start_wk < 0 or start_we < 0:
+    start_wk, start_wk_marker = find_marker(page_text, WEEKDAY_HOURS_MARKERS)
+    start_we, start_we_marker = find_marker(page_text, WEEKEND_HOURS_MARKERS)
+    end_we, _ = find_marker(page_text, HOURS_END_MARKERS)
+    if start_wk < 0 or start_we < 0 or not start_wk_marker or not start_we_marker:
         return {}
     if end_we < 0:
         end_we = len(page_text)
 
-    weekday_text = page_text[start_wk + len("MONDAY through FRIDAY HOURS") : start_we]
-    weekend_text = page_text[start_we + len("WEEKEND HOURS") : end_we]
+    weekday_text = page_text[start_wk + len(start_wk_marker) : start_we]
+    weekend_text = page_text[start_we + len(start_we_marker) : end_we]
 
     weekday_hours = parse_hours_section(weekday_text, weekday_mode=True)
     weekend_hours = parse_hours_section(weekend_text, weekday_mode=False)

@@ -74,6 +74,37 @@ def test_scrape_official_hours_from_mocked_page(monkeypatch):
     assert out["northwest"]["saturday"]["Brunch"] == {"start": "10:30", "end": "14:15"}
 
 
+def test_scrape_official_hours_from_main_content_structure(monkeypatch):
+    html = """
+    <html>
+      <body>
+        <main>
+          <h2>MONDAY through FRIDAY</h2>
+          <p>CONNECTICUT HALL &amp; PUTNAM</p>
+          <p>Breakfast:</p>
+          <p>7am-10:45am</p>
+          <p>Lunch:</p>
+          <p>11:00am-2:30pm</p>
+          <p>Dinner:</p>
+          <p>4:00pm-7:15pm</p>
+          <h2>WEEKEND HOURS</h2>
+          <p>SOUTH</p>
+          <p>Brunch:</p>
+          <p>9:30am-3pm</p>
+          <p>Dinner:</p>
+          <p>4:30-7:15pm</p>
+          <h2>KOSHER &amp; HALAL</h2>
+        </main>
+      </body>
+    </html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    monkeypatch.setattr(ms, "fetch_soup", lambda session, url: soup)
+    out = ms.scrape_official_hours(session=SimpleNamespace())
+    assert out["putnam"]["monday"]["Lunch"] == {"start": "11:00", "end": "14:30"}
+    assert out["south"]["saturday"]["Dinner"] == {"start": "16:30", "end": "19:15"}
+
+
 def test_build_date_url_sets_query_fields():
     base = "https://nutritionanalysis.dds.uconn.edu/shortmenu.aspx?sName=UCONN+Dining+Services&locationNum=16"
     out = ms.build_date_url(base, datetime(2026, 2, 17))
